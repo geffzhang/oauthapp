@@ -3,31 +3,34 @@ using System.Linq;
 using System.Data;
 using System.Data.SqlClient;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Localization;
 using Swashbuckle.AspNetCore.SwaggerGen;
-using IdentityServer4.MicroService.Codes;
-using IdentityServer4.MicroService.Models.CommonModels;
+using IdentityServer4.MicroService.Enums;
 using IdentityServer4.MicroService.Services;
 using IdentityServer4.MicroService.Tenant;
-using IdentityServer4.MicroService.Models.AppTenantModels;
+using IdentityServer4.MicroService.Models.Apis.Common;
+using IdentityServer4.MicroService.Models.Apis.TenantController;
 using static IdentityServer4.MicroService.AppConstant;
+using static IdentityServer4.MicroService.MicroserviceConfig;
+using IdentityServer4.MicroService.Models.Shared;
 
 namespace IdentityServer4.MicroService.Apis
 {
     // Tenant 根据 OwnerUserId 来获取列表、或详情、增删改
 
+    /// <summary>
+    /// 租户
+    /// </summary>
     [Route("Tenant")]
+    [Produces("application/json")]
     [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = Roles.Users)]
     public class TenantController : BasicController
     {
-        #region Services
-        //Database
-        readonly TenantDbContext db;
-        #endregion
-
+        #region 构造函数
         public TenantController(
             TenantDbContext _db,
             RedisService _redis,
@@ -38,30 +41,37 @@ namespace IdentityServer4.MicroService.Apis
             // 多语言
             l = _localizer;
             redis = _redis;
-            db = _db;
+            tenantDb = _db;
             tenantService = _tenantService;
         }
+        #endregion
 
+        #region 租户 - 列表
         /// <summary>
-        /// Get Tenant List
+        /// 租户 - 列表
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.tenant.get</code>
+        /// <label>User Permissions：</label><code>ids4.ms.tenant.get</code>
+        /// </remarks>
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Read)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.TenantGet)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.TenantGet)]
         [SwaggerOperation("Tenant/Get")]
-        public async Task<PagingResult<AppTenant>> Get(PagingRequest<AppTenantQuery> value)
+        public async Task<PagingResult<AppTenant>> Get(PagingRequest<TenantGetRequest> value)
         {
             if (!ModelState.IsValid)
             {
                 return new PagingResult<AppTenant>()
                 {
                     code = (int)BasicControllerEnums.UnprocessableEntity,
-                    error_msg = ModelErrors()
+                    message = ModelErrors()
                 };
             }
 
-            var query = db.Tenants.AsQueryable();
+            var query = tenantDb.Tenants.AsQueryable();
 
             query = query.Where(x => x.OwnerUserId == UserId);
 
@@ -75,10 +85,10 @@ namespace IdentityServer4.MicroService.Apis
             #region total
             var result = new PagingResult<AppTenant>()
             {
-                skip = value.skip,
-                take = value.take,
+                skip = value.skip.Value,
+                take = value.take.Value,
                 total = await query.CountAsync()
-            }; 
+            };
             #endregion
 
             if (result.total > 0)
@@ -86,7 +96,7 @@ namespace IdentityServer4.MicroService.Apis
                 #region orderby
                 if (!string.IsNullOrWhiteSpace(value.orderby))
                 {
-                    if (value.asc)
+                    if (value.asc.Value)
                     {
                         query = query.OrderBy(value.orderby);
                     }
@@ -98,11 +108,11 @@ namespace IdentityServer4.MicroService.Apis
                 #endregion
 
                 #region pagingWithData
-                var data = await query.Skip(value.skip).Take(value.take)
+                var data = await query.Skip(value.skip.Value).Take(value.take.Value)
                             .Include(x => x.Claims)
                             .Include(x => x.Hosts)
                             .Include(x => x.Properties)
-                            .ToListAsync(); 
+                            .ToListAsync();
                 #endregion
 
                 if (data.Count > 0)
@@ -113,18 +123,25 @@ namespace IdentityServer4.MicroService.Apis
 
             return result;
         }
+        #endregion
 
+        #region 租户 - 详情
         /// <summary>
-        /// Get Tenant Detail By Id
+        /// 租户 - 详情
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.tenant.detail</code>
+        /// <label>User Permissions：</label><code>ids4.ms.tenant.detail</code>
+        /// </remarks>
         [HttpGet("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Read)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.TenantDetail)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.TenantDetail)]
         [SwaggerOperation("Tenant/Detail")]
         public async Task<ApiResult<AppTenant>> Get(int id)
         {
-            var query = db.Tenants.AsQueryable();
+            var query = tenantDb.Tenants.AsQueryable();
 
             query = query.Where(x => x.OwnerUserId == UserId);
 
@@ -141,14 +158,21 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<AppTenant>(entity);
         }
+        #endregion
 
+        #region 租户 - 创建
         /// <summary>
-        /// Insert Tenant
+        /// 租户 - 创建
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.tenant.post</code>
+        /// <label>User Permissions：</label><code>ids4.ms.tenant.post</code>
+        /// </remarks>
         [HttpPost]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Create)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.TenantPost)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.TenantPost)]
         [SwaggerOperation("Tenant/Post")]
         public async Task<ApiResult<long>> Post([FromBody]AppTenant value)
         {
@@ -166,37 +190,44 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<long>(value.Id);
         }
+        #endregion
 
+        #region 租户 - 更新
         /// <summary>
-        /// Update Tenant
+        /// 租户 - 更新
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.tenant.put</code>
+        /// <label>User Permissions：</label><code>ids4.ms.tenant.put</code>
+        /// </remarks>
         [HttpPut]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Update)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.TenantPut)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.TenantPut)]
         [SwaggerOperation("Tenant/Put")]
         public async Task<ApiResult<long>> Put([FromBody]AppTenant value)
         {
             if (!ModelState.IsValid)
             {
-                return new ApiResult<long>(l, 
+                return new ApiResult<long>(l,
                     BasicControllerEnums.UnprocessableEntity,
                     ModelErrors());
             }
 
-            using (var tran = db.Database.BeginTransaction(IsolationLevel.ReadCommitted))
+            using (var tran = tenantDb.Database.BeginTransaction(IsolationLevel.ReadCommitted))
             {
                 try
                 {
                     #region Update Entity
                     value.OwnerUserId = UserId;
                     // 需要先更新value，否则更新如claims等属性会有并发问题
-                    db.Update(value);
-                    db.SaveChanges();
+                    tenantDb.Update(value);
+                    tenantDb.SaveChanges();
                     #endregion
 
                     #region Find Entity.Source
-                    var source = await db.Tenants.Where(x => x.Id == value.Id)
+                    var source = await tenantDb.Tenants.Where(x => x.Id == value.Id)
                                      .Include(x => x.Hosts)
                                      .Include(x => x.Claims)
                                     .AsNoTracking()
@@ -214,10 +245,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE AppTenantClaims WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE AppTenantClaims WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                db.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                tenantDb.Database.ExecuteSqlCommand($"DELETE AppTenantClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -228,10 +259,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE AppTenantClaims SET [ClaimType]=@Type,[ClaimValue]=@Value WHERE Id = " + x.Id),
-                                  new SqlParameter("@Type", x.ClaimType),
-                                  new SqlParameter("@Value", x.ClaimValue));
+                                tenantDb.Database.ExecuteSqlCommand($"UPDATE AppTenantClaims SET [ClaimType]={x.ClaimType},[ClaimValue]={x.ClaimValue} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -242,11 +270,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO AppTenantClaims VALUES (@ClaimType,@ClaimValue,@AppTenantId)"),
-                                  new SqlParameter("@ClaimType", x.ClaimType),
-                                  new SqlParameter("@ClaimValue", x.ClaimValue),
-                                  new SqlParameter("@AppTenantId", source.Id));
+                                tenantDb.Database.ExecuteSqlCommand($"INSERT INTO AppTenantClaims VALUES ({x.ClaimType},{x.ClaimValue},{source.Id})");
                             });
                         }
                         #endregion
@@ -264,10 +288,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE AppTenantProperty WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE AppTenantProperties WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                db.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                tenantDb.Database.ExecuteSqlCommand($"DELETE AppTenantProperties WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -278,10 +302,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE AppTenantProperty SET [Key]=@Key,[Value]=@Value WHERE Id = " + x.Id),
-                                  new SqlParameter("@Key", x.Key),
-                                  new SqlParameter("@Value", x.Value));
+                                tenantDb.Database.ExecuteSqlCommand($"UPDATE AppTenantProperties SET [Key]={x.Key},[Value]={x.Value} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -292,11 +313,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO AppTenantProperty VALUES (@Key,@Value,@AppTenantId)"),
-                                  new SqlParameter("@Key", x.Key),
-                                  new SqlParameter("@Value", x.Value),
-                                  new SqlParameter("@AppTenantId", source.Id));
+                                tenantDb.Database.ExecuteSqlCommand($"INSERT INTO AppTenantProperties VALUES ({x.Key},{x.Value},{source.Id})");
                             });
                         }
                         #endregion
@@ -314,10 +331,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE AppTenantHosts WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE AppTenantHosts WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                db.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                tenantDb.Database.ExecuteSqlCommand($"DELETE AppTenantHosts WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -328,9 +345,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE AppTenantHosts SET [HostName]=@HostName WHERE Id = " + x.Id),
-                                  new SqlParameter("@HostName", x.HostName));
+                                tenantDb.Database.ExecuteSqlCommand($"UPDATE AppTenantHosts SET [HostName]= {x.HostName} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -341,10 +356,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                db.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO AppTenantHosts VALUES (@AppTenantId,@HostName)"),
-                                  new SqlParameter("@HostName", x.HostName),
-                                  new SqlParameter("@AppTenantId", source.Id));
+                                tenantDb.Database.ExecuteSqlCommand($"INSERT INTO AppTenantHosts VALUES ({source.Id},{x.HostName})");
                             });
                         }
                         #endregion
@@ -358,7 +370,7 @@ namespace IdentityServer4.MicroService.Apis
                 {
                     tran.Rollback();
 
-                    return new ApiResult<long>(l, 
+                    return new ApiResult<long>(l,
                         BasicControllerEnums.ExpectationFailed,
                         ex.Message);
                 }
@@ -366,51 +378,80 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<long>(value.Id);
         }
+        #endregion
 
+        #region 租户 - 删除
         /// <summary>
-        /// Delete Tenant
+        /// 租户 - 删除
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.tenant.delete</code>
+        /// <label>User Permissions：</label><code>ids4.ms.tenant.delete</code>
+        /// </remarks>
         [HttpDelete("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Delete)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.TenantDelete)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.TenantDelete)]
         [SwaggerOperation("Tenant/Delete")]
         public async Task<ApiResult<long>> Delete(int id)
         {
-            var entity = await db.Tenants.FirstOrDefaultAsync(x => x.OwnerUserId == UserId && x.Id == id);
+            var entity = await tenantDb.Tenants.FirstOrDefaultAsync(x => x.OwnerUserId == UserId && x.Id == id);
 
             if (entity == null)
             {
                 return new ApiResult<long>(l, BasicControllerEnums.NotFound);
             }
 
-            db.Tenants.Remove(entity);
+            tenantDb.Tenants.Remove(entity);
 
-            await db.SaveChangesAsync();
+            await tenantDb.SaveChangesAsync();
 
-            db.Database.ExecuteSqlCommand(new RawSqlString("DELETE AspNetUserTenants WHERE AppTenantId = " + id));
+            tenantDb.Database.ExecuteSqlCommand($"DELETE AspNetUserTenants WHERE AppTenantId = {id}");
 
             return new ApiResult<long>(id);
         }
+        #endregion
 
+        #region 租户 - 详情（公共）
         /// <summary>
-        /// Get Tenant Detail By Host
+        /// 租户 - 详情（公共）
         /// </summary>
         /// <param name="host"></param>
         /// <returns></returns>
         [HttpGet("Info")]
         [AllowAnonymous]
         [SwaggerOperation("Tenant/Info")]
-        public ApiResult<string> Info(string host)
+        public ApiResult<TenantPublicModel> Info(string host)
         {
-            var entity = tenantService.GetTenant(db, host);
+            var entity = tenantService.GetTenant(tenantDb, host);
 
             if (entity == null)
             {
-                return new ApiResult<string>(l, BasicControllerEnums.NotFound);
+                return new ApiResult<TenantPublicModel>(l, BasicControllerEnums.NotFound);
             }
 
-            return new ApiResult<string>(entity.Item1);
+            return new ApiResult<TenantPublicModel>(entity.Item1);
+        } 
+        #endregion
+
+        #region 租户 - 错误码表
+        /// <summary>
+        /// 租户 - 错误码表
+        /// </summary>
+        /// <returns></returns>
+        /// <remarks>
+        /// 租户代码对照表
+        /// </remarks>
+        [HttpGet("Codes")]
+        [AllowAnonymous]
+        [SwaggerOperation("Tenant/Codes")]
+        public List<ErrorCodeModel> Codes()
+        {
+            var result = _Codes<TenantControllerEnums>();
+
+            return result;
         }
+        #endregion
     }
 }

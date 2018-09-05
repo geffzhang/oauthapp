@@ -1,11 +1,15 @@
-﻿using System;
+﻿using Microsoft.EntityFrameworkCore;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
-using Microsoft.EntityFrameworkCore;
+using System.Data;
+using System.Data.Common;
+using System.Data.SqlClient;
+using System.Threading.Tasks;
 
 namespace IdentityServer4.MicroService.Tenant
 {
-    public class TenantDbContext: DbContext
+    public class TenantDbContext : DbContext
     {
         public TenantDbContext(DbContextOptions<TenantDbContext> options)
            : base(options)
@@ -21,12 +25,138 @@ namespace IdentityServer4.MicroService.Tenant
         public DbSet<AppTenant> Tenants { get; set; }
 
         public DbSet<AppTenantHost> TenantHosts { get; set; }
+
+        public async Task<object> ExecuteScalarAsync(string sql, CommandType cmdType = CommandType.Text, params SqlParameter[] sqlParams)
+        {
+            var con = Database.GetDbConnection();
+
+            if (con.State == System.Data.ConnectionState.Closed)
+            {
+                con.Open();
+            }
+
+            else if (con.State == System.Data.ConnectionState.Broken)
+            {
+                con.Close();
+                con.Open();
+            }
+
+            using (var cmd = con.CreateCommand())
+            {
+                cmd.CommandText = sql;
+
+                cmd.Parameters.AddRange(sqlParams);
+
+                return await cmd.ExecuteScalarAsync();
+            }
+        }
+
+        public async Task<int> ExecuteNonQueryAsync(string sql, CommandType cmdType = CommandType.Text, params SqlParameter[] sqlParams)
+        {
+            var con = Database.GetDbConnection();
+
+            if (con.State == System.Data.ConnectionState.Closed)
+            {
+                con.Open();
+            }
+
+            else if (con.State == System.Data.ConnectionState.Broken)
+            {
+                con.Close();
+                con.Open();
+            }
+
+            using (var cmd = con.CreateCommand())
+            {
+                cmd.CommandText = sql;
+
+                cmd.Parameters.AddRange(sqlParams);
+
+                return await cmd.ExecuteNonQueryAsync();
+            }
+        }
+
+        public async Task<DbDataReader> ExecuteReaderAsync(string sql, CommandType cmdType = CommandType.Text, params SqlParameter[] sqlParams)
+        {
+            var con = Database.GetDbConnection();
+
+            if (con.State == System.Data.ConnectionState.Closed)
+            {
+                con.Open();
+            }
+
+            else if (con.State == System.Data.ConnectionState.Broken)
+            {
+                con.Close();
+                con.Open();
+            }
+
+            using (var cmd = con.CreateCommand())
+            {
+                cmd.CommandText = sql;
+
+                cmd.Parameters.AddRange(sqlParams);
+
+                return await cmd.ExecuteReaderAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// 租户默认属性集合
+    /// </summary>
+    public class TenantDefaultProperty
+    {
+        /// <summary>
+        /// 官方网站
+        /// </summary>
+        public const string WebSite = "WebSite";
+
+        /// <summary>
+        /// 开放平台
+        /// </summary>
+        public const string PortalSite = "PortalSite";
+
+        /// <summary>
+        /// 运营中心
+        /// </summary>
+        public const string AdminSite = "AdminSite";
+
+        /// <summary>
+        /// 关键字
+        /// </summary>
+        public const string Keywords = "Keywords";
+
+        /// <summary>
+        /// 描述
+        /// </summary>
+        public const string Summary = "Summary";
+
+        /// <summary>
+        /// 介绍
+        /// </summary>
+        public const string Description = "Description";
+
+        /// <summary>
+        /// 企业邮箱
+        /// </summary>
+        public const string EnterpriseEmail = "EnterpriseEmail";
+
+        /// <summary>
+        /// 站点统计代码
+        /// </summary>
+        public const string Tracking = "Tracking";
+
+        /// <summary>
+        /// 网站图标
+        /// </summary>
+        public const string Favicon = "Favicon";
     }
 
     /// <summary>
     /// 租户实体
     /// </summary>
-    [Table("AppTenant")]
+    [Table("AppTenants")]
     public class AppTenant
     {
         public long Id { get; set; }
@@ -74,7 +204,7 @@ namespace IdentityServer4.MicroService.Tenant
         /// <summary>
         /// 租户数据缓存时长，单位秒
         /// </summary>
-        public long CacheDuration { get; set; } = 3600L; 
+        public long CacheDuration { get; set; } = 3600L;
 
         /// <summary>
         /// 所有者用户Id
@@ -109,7 +239,7 @@ namespace IdentityServer4.MicroService.Tenant
         public string ClaimValue { get; set; }
     }
 
-    [Table("AppTenantProperty")]
+    [Table("AppTenantProperties")]
     public class AppTenantProperty
     {
         public long Id { get; set; }

@@ -3,25 +3,30 @@ using System.Linq;
 using System.Data;
 using System.Data.SqlClient;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Localization;
+using Swashbuckle.AspNetCore.SwaggerGen;
 using IdentityServer4.EntityFramework.Entities;
 using IdentityServer4.EntityFramework.DbContexts;
-using Swashbuckle.AspNetCore.SwaggerGen;
 using IdentityServer4.MicroService.Data;
-using IdentityServer4.MicroService.Codes;
-using IdentityServer4.MicroService.Services;
-using IdentityServer4.MicroService.Models.CommonModels;
-using IdentityServer4.MicroService.Models.ClientModels;
+using IdentityServer4.MicroService.Enums;
+using IdentityServer4.MicroService.Models.Apis.Common;
+using IdentityServer4.MicroService.Models.Apis.ClientController;
 using static IdentityServer4.MicroService.AppConstant;
+using static IdentityServer4.MicroService.MicroserviceConfig;
 
 namespace IdentityServer4.MicroService.Apis
 {
     // Client 根据 userId 来获取列表、或详情、增删改
 
+    /// <summary>
+    /// 客户端
+    /// </summary>
     [Route("Client")]
+    [Produces("application/json")]
     [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = Roles.Users)]
     public class ClientController : BasicController
     {
@@ -29,30 +34,47 @@ namespace IdentityServer4.MicroService.Apis
         // database for identityserver
         readonly ConfigurationDbContext idsDB;
         // database for user
-        readonly ApplicationDbContext userDB;
+        readonly IdentityDbContext userDB;
+        // IdentityServer Tools
+        readonly IdentityServerTools _tools;
         #endregion
 
+        #region 构造函数
         public ClientController(
             ConfigurationDbContext _idsDB,
-            ApplicationDbContext _userDB,
-            IStringLocalizer<ClientController> localizer)
+            IdentityDbContext _userDB,
+            IStringLocalizer<ClientController> localizer,
+            IdentityServerTools tools)
         {
             userDB = _userDB;
             idsDB = _idsDB;
             l = localizer;
+            _tools = tools;
         }
+        #endregion
 
+        #region 客户端 - 列表
+        /// <summary>
+        /// 客户端 - 列表
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.get</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.get</code>
+        /// </remarks>
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Read)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientGet)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientGet)]
         [SwaggerOperation("Client/Get")]
-        public async Task<PagingResult<Client>> Get(PagingRequest<ClientQuery> value)
+        public async Task<PagingResult<Client>> Get(PagingRequest<ClientGetRequest> value)
         {
             if (!ModelState.IsValid)
             {
                 return new PagingResult<Client>()
                 {
                     code = (int)BasicControllerEnums.UnprocessableEntity,
-                    error_msg = ModelErrors()
+                    message = ModelErrors()
                 };
             }
 
@@ -81,8 +103,8 @@ namespace IdentityServer4.MicroService.Apis
             #region total
             var result = new PagingResult<Client>()
             {
-                skip = value.skip,
-                take = value.take,
+                skip = value.skip.Value,
+                take = value.take.Value,
                 total = await query.CountAsync()
             };
             #endregion
@@ -92,7 +114,7 @@ namespace IdentityServer4.MicroService.Apis
                 #region orderby
                 if (!string.IsNullOrWhiteSpace(value.orderby))
                 {
-                    if (value.asc)
+                    if (value.asc.Value)
                     {
                         query = query.OrderBy(value.orderby);
                     }
@@ -105,7 +127,7 @@ namespace IdentityServer4.MicroService.Apis
 
                 #region pagingWithData
                 var data = await query
-               .Skip(value.skip).Take(value.take)
+               .Skip(value.skip.Value).Take(value.take.Value)
                .Include(x => x.Claims)
                .Include(x => x.AllowedGrantTypes)
                .Include(x => x.AllowedScopes)
@@ -123,9 +145,21 @@ namespace IdentityServer4.MicroService.Apis
 
             return result;
         }
+        #endregion
 
+        #region 客户端 - 详情
+        /// <summary>
+        /// 客户端 - 详情
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.detail</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.detail</code>
+        /// </remarks>
         [HttpGet("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Read)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientDetail)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientDetail)]
         [SwaggerOperation("Client/Detail")]
         public async Task<ApiResult<Client>> Get(int id)
         {
@@ -156,9 +190,21 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<Client>(entity);
         }
-        
+        #endregion
+
+        #region 客户端 - 创建
+        /// <summary>
+        /// 客户端 - 创建
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.post</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.post</code>
+        /// </remarks>
         [HttpPost]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Create)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientPost)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientPost)]
         [SwaggerOperation("Client/Post")]
         public async Task<ApiResult<long>> Post([FromBody]Client value)
         {
@@ -170,7 +216,14 @@ namespace IdentityServer4.MicroService.Apis
 
             idsDB.Add(value);
 
-            await idsDB.SaveChangesAsync();
+            try
+            {
+                await idsDB.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                return new ApiResult<long>(l, BasicControllerEnums.ExpectationFailed, ex.Message + ex.StackTrace);
+            }
 
             userDB.UserClients.Add(new AspNetUserClient()
             {
@@ -182,9 +235,21 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<long>(value.Id);
         }
+        #endregion
 
+        #region 客户端 - 更新
+        /// <summary>
+        /// 客户端 - 更新
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.put</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.put</code>
+        /// </remarks>
         [HttpPut]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Update)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientPut)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientPut)]
         [SwaggerOperation("Client/Put")]
         public async Task<ApiResult<long>> Put([FromBody]Client value)
         {
@@ -195,7 +260,7 @@ namespace IdentityServer4.MicroService.Apis
                     ModelErrors());
             }
 
-            if (! await exists(value.Id))
+            if (!await exists(value.Id))
             {
                 return new ApiResult<long>(l, BasicControllerEnums.NotFound);
             }
@@ -236,10 +301,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientClaims WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientClaims WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -250,10 +315,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientClaims SET [Type]=@Type,[Value]=@Value WHERE Id = " + x.Id),
-                                  new SqlParameter("@Type", x.Type),
-                                  new SqlParameter("@Value", x.Value));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientClaims SET [Type]={x.Type},[Value]={x.Value} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -264,11 +326,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientClaims VALUES (@ClientId,@Type,@Value)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@Type", x.Type),
-                                  new SqlParameter("@Value", x.Value));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientClaims VALUES ({source.Id},{x.Type},{ x.Value})");
                             });
                         }
                         #endregion
@@ -286,10 +344,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientGrantTypes WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientGrantTypes WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientGrantTypes WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -300,9 +358,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientGrantTypes SET [GrantType]=@GrantType WHERE Id = " + x.Id),
-                                  new SqlParameter("@GrantType", x.GrantType));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientGrantTypes SET [GrantType]= {x.GrantType} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -313,10 +369,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientGrantTypes VALUES (@ClientId,@GrantType)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@GrantType", x.GrantType));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientGrantTypes VALUES ({source.Id},{x.GrantType})");
                             });
                         }
                         #endregion
@@ -334,10 +387,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientScopes WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientScopes WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientScopes WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -348,9 +401,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientScopes SET [Scope]=@Scope WHERE Id = " + x.Id),
-                                  new SqlParameter("@Scope", x.Scope));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientScopes SET [Scope]= {x.Scope} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -361,10 +412,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientScopes VALUES (@ClientId,@Scope)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@Scope", x.Scope));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientScopes VALUES ({source.Id},{x.Scope})");
                             });
                         }
                         #endregion
@@ -382,10 +430,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientSecrets WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientSecrets WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientSecrets WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -396,22 +444,22 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                var sql = new RawSqlString("UPDATE ClientSecrets SET [Description]=@Description,[Expiration]=@Expiration,[Type]=@Type,[Value]=@Value WHERE Id = " + x.Id);
+                                //var sql = new RawSqlString("UPDATE ClientSecrets SET [Description]=@Description,[Expiration]=@Expiration,[Type]=@Type,[Value]=@Value WHERE Id = " + x.Id);
 
-                                var _params = new SqlParameter[]
-                                {
-                                    new SqlParameter("@Description", DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Expiration",DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Type",DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Value", DBNull.Value){ IsNullable=true },
-                                };
+                                //var _params = new SqlParameter[]
+                                //{
+                                //    new SqlParameter("@Description", DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Expiration",DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Type",DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Value", DBNull.Value){ IsNullable=true },
+                                //};
 
-                                if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
-                                if (x.Expiration.HasValue) { _params[1].Value = x.Expiration; }
-                                if (!string.IsNullOrWhiteSpace(x.Type)) { _params[2].Value = x.Type; }
-                                if (!string.IsNullOrWhiteSpace(x.Value)) { _params[3].Value = x.Value; }
+                                //if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
+                                //if (x.Expiration.HasValue) { _params[1].Value = x.Expiration; }
+                                //if (!string.IsNullOrWhiteSpace(x.Type)) { _params[2].Value = x.Type; }
+                                //if (!string.IsNullOrWhiteSpace(x.Value)) { _params[3].Value = x.Value; }
 
-                                idsDB.Database.ExecuteSqlCommand(sql, _params);
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientSecrets SET [Description]={x.Description},[Expiration]={x.Expiration},[Type]={x.Type},[Value]={x.Value} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -422,23 +470,23 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                var sql = new RawSqlString("INSERT INTO ClientSecrets VALUES (@ClientId,@Description,@Expiration,@Type,@Value)");
+                                //var sql = new RawSqlString("INSERT INTO ClientSecrets VALUES (@ClientId,@Description,@Expiration,@Type,@Value)");
 
-                                var _params = new SqlParameter[]
-                                {
-                                    new SqlParameter("@ClientId", source.Id),
-                                    new SqlParameter("@Description", DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Expiration", DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Type", DBNull.Value){ IsNullable=true },
-                                    new SqlParameter("@Value", DBNull.Value){ IsNullable=true },
-                                };
+                                //var _params = new SqlParameter[]
+                                //{
+                                //    new SqlParameter("@ClientId", source.Id),
+                                //    new SqlParameter("@Description", DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Expiration", DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Type", DBNull.Value){ IsNullable=true },
+                                //    new SqlParameter("@Value", DBNull.Value){ IsNullable=true },
+                                //};
 
-                                if (!string.IsNullOrWhiteSpace(x.Description)) { _params[1].Value = x.Description; }
-                                if (x.Expiration.HasValue) { _params[2].Value = x.Expiration; }
-                                if (!string.IsNullOrWhiteSpace(x.Type)) { _params[3].Value = x.Type; }
-                                if (!string.IsNullOrWhiteSpace(x.Value)) { _params[4].Value = x.Value; }
+                                //if (!string.IsNullOrWhiteSpace(x.Description)) { _params[1].Value = x.Description; }
+                                //if (x.Expiration.HasValue) { _params[2].Value = x.Expiration; }
+                                //if (!string.IsNullOrWhiteSpace(x.Type)) { _params[3].Value = x.Type; }
+                                //if (!string.IsNullOrWhiteSpace(x.Value)) { _params[4].Value = x.Value; }
 
-                                idsDB.Database.ExecuteSqlCommand(sql, _params);
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientSecrets VALUES ({source.Id},{x.Description},{x.Expiration},{x.Type},{x.Value})");
                             });
                         }
                         #endregion
@@ -456,10 +504,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientCorsOrigins WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientCorsOrigins WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientCorsOrigins WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -470,9 +518,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientCorsOrigins SET [Origin]=@Origin WHERE Id = " + x.Id),
-                                  new SqlParameter("@Origin", x.Origin));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientCorsOrigins SET [Origin]={x.Origin} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -483,10 +529,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientCorsOrigins VALUES (@ClientId,@Origin)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@Origin", x.Origin));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientCorsOrigins VALUES ({source.Id},{x.Origin})");
                             });
                         }
                         #endregion
@@ -504,10 +547,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientRedirectUris WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientRedirectUris WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientRedirectUris WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -518,9 +561,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientRedirectUris SET [RedirectUri]=@RedirectUri WHERE Id = " + x.Id),
-                                  new SqlParameter("@RedirectUri", x.RedirectUri));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientRedirectUris SET [RedirectUri]= {x.RedirectUri} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -531,10 +572,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientRedirectUris VALUES (@ClientId,@RedirectUri)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@RedirectUri", x.RedirectUri));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientRedirectUris VALUES ({source.Id},{x.RedirectUri})");
                             });
                         }
                         #endregion
@@ -552,10 +590,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientPostLogoutRedirectUris WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientPostLogoutRedirectUris WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientPostLogoutRedirectUris WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -566,9 +604,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientPostLogoutRedirectUris SET [PostLogoutRedirectUri]=@PostLogoutRedirectUri WHERE Id = " + x.Id),
-                                  new SqlParameter("@PostLogoutRedirectUri", x.PostLogoutRedirectUri));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientPostLogoutRedirectUris SET [PostLogoutRedirectUri]= {x.PostLogoutRedirectUri} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -579,10 +615,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientPostLogoutRedirectUris VALUES (@ClientId,@PostLogoutRedirectUri)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@PostLogoutRedirectUri", x.PostLogoutRedirectUri));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientPostLogoutRedirectUris VALUES ({source.Id},{x.PostLogoutRedirectUri})");
                             });
                         }
                         #endregion
@@ -600,10 +633,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientIdPRestrictions WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientIdPRestrictions WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientIdPRestrictions WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -614,9 +647,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientIdPRestrictions SET [Provider]=@Provider WHERE Id = " + x.Id),
-                                  new SqlParameter("@Provider", x.Provider));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientIdPRestrictions SET [Provider]={x.Provider} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -627,10 +658,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientIdPRestrictions VALUES (@ClientId,@Provider)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@Provider", x.Provider));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientIdPRestrictions VALUES ({source.Id},{x.Provider})");
                             });
                         }
                         #endregion
@@ -648,10 +676,10 @@ namespace IdentityServer4.MicroService.Apis
 
                             if (DeleteEntities.Count() > 0)
                             {
-                                var sql = string.Format("DELETE ClientProperties WHERE ID IN ({0})",
-                                            string.Join(",", DeleteEntities));
+                                //var sql = string.Format("DELETE ClientProperties WHERE ID IN ({0})",
+                                //            string.Join(",", DeleteEntities));
 
-                                idsDB.Database.ExecuteSqlCommand(new RawSqlString(sql));
+                                idsDB.Database.ExecuteSqlCommand($"DELETE ClientProperties WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -662,10 +690,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             UpdateEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("UPDATE ClientProperties SET [Key]=@Key,[Value]=@Value WHERE Id = " + x.Id),
-                                  new SqlParameter("@Key", x.Key),
-                                  new SqlParameter("@Value", x.Value));
+                                idsDB.Database.ExecuteSqlCommand($"UPDATE ClientProperties SET [Key]={x.Key},[Value]={x.Value} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -676,11 +701,7 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                idsDB.Database.ExecuteSqlCommand(
-                                  new RawSqlString("INSERT INTO ClientProperties VALUES (@ClientId,@Key,@Value)"),
-                                  new SqlParameter("@ClientId", source.Id),
-                                  new SqlParameter("@Key", x.Key),
-                                  new SqlParameter("@Value", x.Value));
+                                idsDB.Database.ExecuteSqlCommand($"INSERT INTO ClientProperties VALUES ({source.Id},{x.Key},{x.Value})");
                             });
                         }
                         #endregion
@@ -702,9 +723,21 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<long>(value.Id);
         }
+        #endregion
 
+        #region 客户端 - 删除
+        /// <summary>
+        /// 客户端 - 删除
+        /// </summary>
+        /// <param name="id"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.delete</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.delete</code>
+        /// </remarks>
         [HttpDelete("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.Delete)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientDelete)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientDelete)]
         [SwaggerOperation("Client/Delete")]
         public async Task<ApiResult<long>> Delete(int id)
         {
@@ -731,7 +764,88 @@ namespace IdentityServer4.MicroService.Apis
 
             return new ApiResult<long>(id);
         }
+        #endregion
 
+        #region 客户端 - 创建令牌
+        /// <summary>
+        /// 客户端 - 创建令牌
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.issuetoken</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.issuetoken</code>
+        /// </remarks>
+        [HttpPost("IssueToken")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientIssueToken)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientIssueToken)]
+        [SwaggerOperation("Client/IssueToken")]
+        public async Task<ApiResult<string>> IssueToken([FromBody]ClientIssueTokenRequest value)
+        {
+            if (value.lifetime < 1) { value.lifetime = 3600; }
+
+            var excludeClaimTypes = new List<String>() { "nbf", "exp", "iss" };
+
+            var claims = User.Claims.Where(x => !excludeClaimTypes.Contains(x.Type)).ToList();
+
+            var token = await _tools.IssueJwtAsync(value.lifetime, claims);
+
+            return new ApiResult<string>(token);
+        }
+        #endregion
+
+        #region 客户端 - 生成密钥
+        /// <summary>
+        /// 客户端 - 生成密钥
+        /// </summary>
+        /// <param name="id"></param>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        /// <remarks>
+        /// <label>Client Scopes：</label><code>ids4.ms.client.postsecretkey</code>
+        /// <label>User Permissions：</label><code>ids4.ms.client.postsecretkey</code>
+        /// </remarks>
+        [HttpPost("{id}/Secretkey")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ClientPostSecretkey)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ClientPostSecretkey)]
+        [SwaggerOperation("Client/PostSecretkey")]
+        public ApiResult<string> PostSecretkey(int id,[FromBody]ClientPostSecretkeyRequest value)
+        {
+            var result = string.Empty;
+
+            switch (value.keyType)
+            {
+                case SecretKeyType.Sha512:
+                    result = IdentityServer4.Models.HashExtensions.Sha512(value.plaintext);
+                    break;
+
+                case SecretKeyType.Sha256:
+                default:
+                    result = IdentityServer4.Models.HashExtensions.Sha256(value.plaintext);
+                    break;
+            }
+
+            return new ApiResult<string>(result);
+        }
+        #endregion
+
+        #region 客户端 - 错误码表
+        /// <summary>
+        /// 客户端 - 错误码表
+        /// </summary>
+        /// <remarks>客户端代码对照表</remarks>
+        [HttpGet("Codes")]
+        [AllowAnonymous]
+        [SwaggerOperation("Client/Codes")]
+        public List<ErrorCodeModel> Codes()
+        {
+            var result = _Codes<ClientControllerEnums>();
+
+            return result;
+        }
+        #endregion
+
+        #region 辅助方法
         async Task<bool> exists(long id)
         {
             var query = idsDB.Clients.AsQueryable();
@@ -747,5 +861,6 @@ namespace IdentityServer4.MicroService.Apis
 
             return query.Any(x => x.Id == id);
         }
+        #endregion
     }
 }

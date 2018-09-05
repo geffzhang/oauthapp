@@ -1,6 +1,15 @@
-﻿# IdentityServer4.MicroService
+﻿
+[![Build status](https://ci.appveyor.com/api/projects/status/x51ob7f1p5ihff2i?svg=true)](https://ci.appveyor.com/project/seven1986/identityserver4-microservice)  [![readthedocs](https://img.shields.io/readthedocs/identityserver4microservice.svg)](http://identityserver4microservice.readthedocs.io)
+
+
+# IdentityServer4.MicroService
 
 IdentityServer4.MicroService是一个免费开源的微服务框架，基于IdentityServer4、Azure API Management构建。 
+
+IdentityServer4.MicroService | IdentityServer4.MicroService.AzureJobs
+--------------- | ---------------
+[![NuGet](https://img.shields.io/nuget/v/identityserver4microservice.svg)](https://github.com/seven1986/IdentityServer4.MicroService)|[![NuGet](https://img.shields.io/nuget/v/IdentityServer4MicroService.AzureJobs.svg)](https://github.com/seven1986/IdentityServer4.MicroService)
+
 
 核心功能
 --
@@ -25,14 +34,14 @@ Acknowledgements
 * [Azure API Management](https://azure.microsoft.com/zh-cn/services/api-management/)
 * [Swagger Codegen](https://github.com/swagger-api/swagger-codegen)
 
-For run this project requires
+For run this project recommends
 --
 * Azure Key Valut (统一配置，将Appsetting的配置、SSL证书迁移到Azure Key Valut等)
 * Azure Redis （缓存）
 * Azure SqlServer （持久存储，User、Client、ApiResource等数据）
 * Azure Storage （Table/Queue/Blob）
 * Email & Message （Send Cloud）
-* Elastic Search （请求日志）
+* Elastic Search （请求日志） 
 
 
 > 目前主要由[seven1986](https://github.com/seven1986)创建和维护。
