@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Linq;
-using System.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -103,12 +103,14 @@ namespace IdentityServer4.MicroService.Services
             #endregion
 
             #region orderBy
-            var OrderBy = " ID DESC ";
-            if (!string.IsNullOrWhiteSpace(value.orderby) &&
-                (Columns[TableName].Contains(value.orderby) ||
-                 OrderByFieldsExtension.Contains(value.orderby)))
+            var OrderBy = Columns[TableName][0] + " DESC ";
+
+            if (!string.IsNullOrWhiteSpace(value.orderby))
             {
-                OrderBy = " " + value.orderby + " " + (!value.asc.Value ? "DESC" : "ASC");
+                if (Columns[TableName].Contains(value.orderby) || OrderByFieldsExtension.Contains(value.orderby))
+                {
+                    OrderBy = " " + value.orderby + " " + (!value.asc.Value ? "DESC" : "ASC");
+                }
             }
             #endregion
 
@@ -165,9 +167,15 @@ namespace IdentityServer4.MicroService.Services
                             {
                                 var PropertyName = Columns[TableName][i];
 
-                                var PropertyValue = reader[PropertyName];
+                                object PropertyValue = null;
 
-                                if (PropertyValue != DBNull.Value)
+                                try
+                                {
+                                    PropertyValue = reader[PropertyName];
+                                }
+                                catch { }
+
+                                if (PropertyValue != null && PropertyValue != DBNull.Value)
                                 {
                                     var Property = entityType.GetProperty(PropertyName);
 

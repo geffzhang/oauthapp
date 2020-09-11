@@ -3,19 +3,28 @@ using IdentityServer4.MicroService.Models.Shared;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using System;
-using System.Data.SqlClient;
 using System.Linq;
 
 namespace IdentityServer4.MicroService.Tenant
 {
     public class TenantService
     {
-        IMemoryCache _cache;
+       readonly IMemoryCache _cache;
 
         public TenantService(
             IMemoryCache cache)
         {
             _cache = cache;
+        }
+
+        public MemoryCacheEntryOptions CacheEntryOptions(double duration)
+        {
+            var MemoryCacheOptions = new MemoryCacheEntryOptions();
+
+            MemoryCacheOptions.SetAbsoluteExpiration(
+                TimeSpan.FromSeconds(duration));
+
+            return MemoryCacheOptions;
         }
 
         public Tuple<TenantPublicModel, TenantPrivateModel> GetTenant(TenantDbContext _db, string host)
@@ -37,31 +46,26 @@ namespace IdentityServer4.MicroService.Tenant
             if (tenant_public == null ||
                 tenant_private == null)
             {
-                var _tenantId = _db.ExecuteScalarAsync(
-                    "SELECT AppTenantId FROM AppTenantHosts WHERE HostName = @HostName", System.Data.CommandType.Text,
-                    new SqlParameter("@HostName", host)).Result;
+                var _tenantId = _db.TenantHosts.Where(x => x.HostName.Equals(host))
+                    .Select(x => x.AppTenantId).FirstOrDefault();
 
-                if (_tenantId != null)
+                if (_tenantId > 0)
                 {
-                    var tenantId = long.Parse(_tenantId.ToString());
-
                     var tenant = _db.Tenants
                         .Include(x => x.Claims)
                         .Include(x => x.Hosts)
                         .Include(x => x.Properties)
-                        .FirstOrDefault(x => x.Id == tenantId);
+                        .FirstOrDefault(x => x.Id == _tenantId);
 
                     tenant_public = tenant.ToPublicModel();
 
                     tenant_private = tenant.ToPrivateModel();
 
-                    _cache.Set(Unique_TenantPublic_CacheKey,
-                        tenant_public,
-                        TimeSpan.FromSeconds(tenant.CacheDuration));
+                    var cacheOptions = CacheEntryOptions(TenantConstant.SchemesReflushDuration);
 
-                    _cache.Set(Unique_TenantPrivate_CacheKey,
-                        tenant_private,
-                        TimeSpan.FromSeconds(tenant.CacheDuration));
+                    _cache.Set(Unique_TenantPublic_CacheKey, tenant_public, cacheOptions);
+
+                    _cache.Set(Unique_TenantPrivate_CacheKey, tenant_private, cacheOptions);
                 }
             }
 

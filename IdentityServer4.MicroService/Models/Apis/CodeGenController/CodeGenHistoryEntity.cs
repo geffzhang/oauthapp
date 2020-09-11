@@ -1,4 +1,4 @@
-﻿using Microsoft.WindowsAzure.Storage.Table;
+﻿using Microsoft.Azure.Cosmos.Table;
 
 namespace IdentityServer4.MicroService.Models.Apis.CodeGenController
 {
@@ -9,7 +9,7 @@ namespace IdentityServer4.MicroService.Models.Apis.CodeGenController
         /// <summary>
         /// 
         /// </summary>
-        /// <param name="apiResourceId">微服务ID</param>
+        /// <param name="apiResourceId">API的ID</param>
         /// <param name="sdkName">sdk包的名称</param>
         public CodeGenHistoryEntity(string apiResourceId, string sdkName)
         {

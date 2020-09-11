@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using static IdentityServer4.MicroService.MicroserviceConfig;
 
 namespace IdentityServer4.MicroService.Services
 {
@@ -26,7 +25,7 @@ namespace IdentityServer4.MicroService.Services
         public static async Task<IdentityResult> CreateUser(
             long TenantId,
             UserManager<AppUser> userManager,
-            IdentityDbContext userContext,
+            UserDbContext userContext,
             AppUser user,
             List<long> roleIds,
             string permissions,
@@ -37,8 +36,13 @@ namespace IdentityServer4.MicroService.Services
                 user.ParentUserID = AppConstant.seedUserId;
             }
 
-            IdentityResult result = null;
+            if (string.IsNullOrWhiteSpace(user.Email))
+            {
+                user.Email = user.UserKey.ToString("N") + "@unknow.com";
+            }
 
+            IdentityResult result = null;
+            
             // 如果没有设置密码
             if (string.IsNullOrWhiteSpace(user.PasswordHash))
             {
@@ -110,7 +114,7 @@ namespace IdentityServer4.MicroService.Services
                 {
                     user.Claims.Add(new AppUserClaim()
                     {
-                        ClaimType = ClaimTypes.UserPermission,
+                        ClaimType = PolicyKey.UserPermission,
                         ClaimValue = string.Join(",", permissions),
                     });
                 }

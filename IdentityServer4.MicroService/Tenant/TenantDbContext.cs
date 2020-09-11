@@ -26,6 +26,10 @@ namespace IdentityServer4.MicroService.Tenant
 
         public DbSet<AppTenantHost> TenantHosts { get; set; }
 
+        public DbSet<AppTenantClaim> TenantClaims { get; set; }
+
+        public DbSet<AppTenantProperty> TenantProperties { get; set; }
+
         public async Task<object> ExecuteScalarAsync(string sql, CommandType cmdType = CommandType.Text, params SqlParameter[] sqlParams)
         {
             var con = Database.GetDbConnection();
@@ -204,7 +208,7 @@ namespace IdentityServer4.MicroService.Tenant
         /// <summary>
         /// 租户数据缓存时长，单位秒
         /// </summary>
-        public long CacheDuration { get; set; } = 3600L;
+        public long CacheDuration { get; set; } = 5;
 
         /// <summary>
         /// 所有者用户Id

@@ -2,36 +2,15 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
-using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using AspNet.Security.OAuth.Amazon;
-using AspNet.Security.OAuth.LinkedIn;
-using AspNet.Security.OAuth.Instagram;
-using AspNet.Security.OAuth.Paypal;
-using AspNet.Security.OAuth.Gitter;
-using AspNet.Security.OAuth.Reddit;
-using AspNet.Security.OAuth.VisualStudio;
-using AspNet.Security.OAuth.WordPress;
-using AspNet.Security.OAuth.Salesforce;
-using Microsoft.AspNetCore.Authentication.QQ;
-using Microsoft.AspNetCore.Authentication.Weixin;
-using Microsoft.AspNetCore.Authentication.Weibo;
-using Microsoft.AspNetCore.Authentication.GitHub;
-using Microsoft.AspNetCore.Authentication.Facebook;
-using Microsoft.AspNetCore.Authentication.Twitter;
-using Microsoft.AspNetCore.Authentication.Google;
-using Microsoft.AspNetCore.Authentication.MicrosoftAccount;
 using IdentityServer4.Models;
 using IdentityServer4.EntityFramework.DbContexts;
 using IdentityServer4.EntityFramework.Mappers;
-using static IdentityServer4.MicroService.MicroserviceConfig;
 using IdentityServer4.MicroService.Data;
 using IdentityServer4.MicroService.Tenant;
-using IdentityServer4.MicroService.Attributes;
 using IdentityServer4.MicroService.CacheKeys;
 using IdentityServer4.MicroService.Services;
 
@@ -39,54 +18,50 @@ namespace IdentityServer4.MicroService
 {
     public class AppDefaultData
     {
+
+        #region SwaggerClient
         /// <summary>
-        /// 初始管理员
+        /// SwaggerClient - SwaggerUI使用
         /// </summary>
-        public class Admin
+        public class SwaggerClient
         {
-            public const string Email = "1@1.com";
-            public const string PasswordHash = "123456aA!";
+            public static string ClientId = "swagger";
+            public static string ClientName = "swagger";
+            public static string ClientSecret = "swagger";
+            public static List<string> AllowedGrantTypes = GrantTypes.CodeAndClientCredentials.ToList();
         }
+        #endregion
+
+        #region IdentityServer4Client
+        /// <summary>
+        /// IdentityServer4Client - 后台使用
+        /// </summary>
+        public class IdentityServer4Client
+        {
+            public static string ClientId = "identityserver4";
+
+            public static string ClientName = "identityserver4";
+
+            public static string ClientSecret = "identityserver4";
+
+            public static List<string> AllowedGrantTypes = GrantTypes.ImplicitAndClientCredentials.ToList();
+
+            public static List<string> PostLogoutRedirectUris = new List<string>();
+        }
+        #endregion
 
         /// <summary>
-        /// 初始租户
+        /// 租户
         /// </summary>
         public class Tenant
         {
-            public static void InitOAuthens()
-            {
-                //auth login
-                InsertOAuth(AmazonAuthenticationDefaults.AuthenticationScheme, typeof(AmazonAuthenticationHandler));
-                InsertOAuth(FacebookDefaults.AuthenticationScheme, typeof(FacebookHandler2));
-                InsertOAuth(GitHubDefaults.AuthenticationScheme, typeof(GitHubHandler));
-                InsertOAuth(GitterAuthenticationDefaults.AuthenticationScheme, typeof(GitterAuthenticationHandler));
-                InsertOAuth(GoogleDefaults.AuthenticationScheme, typeof(GoogleHandler2));
-                InsertOAuth(InstagramAuthenticationDefaults.AuthenticationScheme, typeof(InstagramAuthenticationHandler));
-                InsertOAuth(LinkedInAuthenticationDefaults.AuthenticationScheme, typeof(LinkedInAuthenticationHandler));
-                InsertOAuth(MicrosoftAccountDefaults.AuthenticationScheme, typeof(MicrosoftAccountHandler2));
-                InsertOAuth(PaypalAuthenticationDefaults.AuthenticationScheme, typeof(PaypalAuthenticationHandler));
-                InsertOAuth(QQDefaults.AuthenticationScheme, typeof(QQHandler));
-                InsertOAuth(RedditAuthenticationDefaults.AuthenticationScheme, typeof(RedditAuthenticationHandler));
-                InsertOAuth(SalesforceAuthenticationDefaults.AuthenticationScheme, typeof(SalesforceAuthenticationHandler));
-                InsertOAuth(TwitterDefaults.AuthenticationScheme, typeof(TwitterHandler2));
-                InsertOAuth(VisualStudioAuthenticationDefaults.AuthenticationScheme, typeof(VisualStudioAuthenticationHandler));
-                InsertOAuth(WeiboDefaults.AuthenticationScheme, typeof(WeiboHandler));
-                InsertOAuth(WeixinDefaults.AuthenticationScheme, typeof(WeixinHandler));
-                InsertOAuth(WordPressAuthenticationDefaults.AuthenticationScheme, typeof(WordPressAuthenticationHandler));
-            }
+            public static string WebSite = "";//http://localhost:44309
 
-            static void InsertOAuth(string scheme, Type handlerType, string clientId = "1", string clientSecret = "1")
-            {
-                TenantProperties.Add($"{scheme}:ClientId", clientId);
-                TenantProperties.Add($"{scheme}:ClientSecret", clientSecret);
+            public static string IdentityServerIssuerUri = "";//localhost:44309
 
-                OAuthHandlers.Add(scheme, handlerType);
-            }
+            public static string AppHostName = "";//localhost:44309
 
-            public static string IdentityServerIssuerUri = "localhost:44309";
-            public static string AppHostName = "localhost:44309";
-            public static string Name = "微服务";
-            public static string WebSite = "http://localhost:44309";
+            public static string Name = "ISMS";
 
             public static Dictionary<string, string> TenantProperties =
                     new Dictionary<string, string>()
@@ -102,7 +77,6 @@ namespace IdentityServer4.MicroService
                      { TenantDefaultProperty.WebSite, ""},
                      { TenantDefaultProperty.Favicon, "favicon.ico"},
                      
-
                     //  Azure Api Management
                     { AzureApiManagementKeys.Host, ""},
                     { AzureApiManagementKeys.ApiId, "integration"},
@@ -112,106 +86,31 @@ namespace IdentityServer4.MicroService
                     { AzureApiManagementKeys.PortalUris, ""},
                     { AzureApiManagementKeys.DelegationKey, ""},
                 };
-
-            public static Dictionary<string, Type> OAuthHandlers = new Dictionary<string, Type>();
         }
 
-        /// <summary>
-        /// 初始Client(用来测试)
-        /// </summary>
-        public class TestClient
-        {
-            public const string ClientId = "test";
-            public const string ClientName = "测试专用";
-            public const string ClientSecret = "1";
-            public static ICollection<string> AllowedGrantTypes = GrantTypes.CodeAndClientCredentials;
-            public static List<string> RedirectUris = new List<string>()
-            {
-                "https://{0}/swagger/oauth2-redirect.html"
-            };
-        }
-
-        /// <summary>
-        /// 初始Client(后台使用)
-        /// </summary>
-        public class AdminPortalClient
-        {
-            public const string ClientId = "adminportal";
-
-            public const string ClientName = "后台专用";
-
-            public const string ClientSecret = "1";
-
-            public static ICollection<string> AllowedGrantTypes = GrantTypes.ImplicitAndClientCredentials;
-
-            public static ICollection<string> RedirectUris = new string[]{
-                "http://localhost:4200/auth-callback",
-                // for IdentityServer4.MicroService.UI
-                "https://localhost:44386/callback.html",
-                "https://localhost:44386/silent_callback.html",
-            };
-
-            public static ICollection<string> PostLogoutRedirectUris = new string[]{
-                "http://localhost:4200/logout-callback",
-
-                 // for IdentityServer4.MicroService.UI
-                "http://localhost:44386/logout.html"
-            };
-        }
-
-        public static IEnumerable<AppUser> GetUsers()
-        {
-            return new List<AppUser>
-                {
-                     new AppUser()
-                     {
-                        Email=Admin.Email,
-                        UserName=Admin.Email,
-                        PasswordHash=Admin.PasswordHash,
-                        EmailConfirmed=true,
-                        ParentUserID=AppConstant.seedUserId
-                     }
-                };
-        }
-
-        public static IEnumerable<AppRole> GetRoles()
-        {
-            var result = new List<AppRole>();
-
-            var roles = typeof(Roles).GetFields();
-
-            foreach (var role in roles)
-            {
-                var roleName = role.GetRawConstantValue().ToString();
-
-                var roleDisplayName = role.GetCustomAttribute<DisplayNameAttribute>().DisplayName;
-
-                result.Add(new AppRole
-                {
-                    Name = roleName,
-                    NormalizedName = roleDisplayName,
-                    ConcurrencyStamp = Guid.NewGuid().ToString()
-                });
-            }
-
-            return result;
-        }
-
-        public static IEnumerable<Client> GetClients()
+        public static IEnumerable<Client> GetClients(Uri ServerUrl)
         {
             // client credentials client
+            var additionGrantTypes = new List<string>() { "mobile_code", "openid_oauth" };
+
+            additionGrantTypes.ForEach(_grantType =>
+            {
+                SwaggerClient.AllowedGrantTypes.Add(_grantType);
+                IdentityServer4Client.AllowedGrantTypes.Add(_grantType);
+            });
+
             return new List<Client>
                 {
-                    #region Test Client
+                    #region SwaggerClient
 		            new Client
                     {
-                        ClientId = TestClient.ClientId,
-                        ClientName = TestClient.ClientName,
-                        AllowedGrantTypes = TestClient.AllowedGrantTypes,
+                        ClientId = SwaggerClient.ClientId,
+                        ClientName = SwaggerClient.ClientName,
+                        AllowedGrantTypes = SwaggerClient.AllowedGrantTypes,
                         AllowAccessTokensViaBrowser = true,
                         ClientSecrets =
                         {
-                            new Secret(TestClient.ClientSecret.Sha256())
+                            new Secret(SwaggerClient.ClientSecret.Sha256())
                         },
                         BackChannelLogoutSessionRequired=false,
                         BackChannelLogoutUri="",
@@ -220,27 +119,30 @@ namespace IdentityServer4.MicroService
                         AlwaysSendClientClaims = true,
                         FrontChannelLogoutSessionRequired=false,
                         FrontChannelLogoutUri="",
-                        RedirectUris = TestClient.RedirectUris,
+                        RedirectUris = {
+                            $"{ServerUrl.OriginalString}/swagger/oauth2-redirect.html",
+                            $"{ServerUrl.OriginalString}/tool"
+                        },
                         AllowedScopes =
                         {
                             IdentityServerConstants.StandardScopes.OpenId,
                             IdentityServerConstants.StandardScopes.Profile,
-                            MicroServiceName + ".all"
-                        },
+                            AppConstant.MicroServiceName + ".all"
+                        }, 
                         AllowOfflineAccess = true
                     },
 	                #endregion
 
-                    #region AdminPortal Client
+                    #region IdentityServer4Client
 		            new Client
                     {
-                        ClientId = AdminPortalClient.ClientId,
-                        ClientName = AdminPortalClient.ClientName,
-                        AllowedGrantTypes = AdminPortalClient.AllowedGrantTypes,
+                        ClientId = IdentityServer4Client.ClientId,
+                        ClientName = IdentityServer4Client.ClientName,
+                        AllowedGrantTypes = IdentityServer4Client.AllowedGrantTypes,
                         AllowAccessTokensViaBrowser = true,
                         ClientSecrets =
                         {
-                            new Secret(AdminPortalClient.ClientSecret.Sha256())
+                            new Secret(IdentityServer4Client.ClientSecret.Sha256())
                         },
                         BackChannelLogoutSessionRequired=false,
                         BackChannelLogoutUri="",
@@ -251,14 +153,16 @@ namespace IdentityServer4.MicroService
                         FrontChannelLogoutSessionRequired=false,
                         FrontChannelLogoutUri="",
 
-                        RedirectUris = AdminPortalClient.RedirectUris,
-                        PostLogoutRedirectUris = AdminPortalClient.PostLogoutRedirectUris,
+                        RedirectUris ={
+                            $"{ServerUrl.OriginalString}/tool"
+                        },
+                        //PostLogoutRedirectUris = AdminPortalClient.PostLogoutRedirectUris,
 
                         AllowedScopes =
                         {
                             IdentityServerConstants.StandardScopes.OpenId,
                             IdentityServerConstants.StandardScopes.Profile,
-                            MicroServiceName + ".all"
+                            AppConstant.MicroServiceName + ".all"
                         },
                         AllowOfflineAccess = true
                     }
@@ -270,63 +174,62 @@ namespace IdentityServer4.MicroService
         {
             return new List<IdentityResource>
                 {
-                    new IdentityResources.OpenId(){  UserClaims={ "role", ClaimTypes.UserPermission } },
+                    new IdentityResources.OpenId(),
                     new IdentityResources.Profile(),
                     new IdentityResources.Address(),
                     new IdentityResources.Email(),
                     new IdentityResources.Phone(),
-                };
+                    new IdentityResource("role","Your user role",new List<string>(){ "role"}),
+                    new IdentityResource("permission","Your user permission",new List<string>(){ "permission"})
+            };
         }
 
         public static IEnumerable<ApiResource> GetApiResources()
         {
-            var ControllerScopes = new List<Scope>();
-
-            var ActionScopes = typeof(ClientScopes).GetFields().Select(x =>
-            {
-                var permissionValues =
-                x.GetCustomAttribute<PolicyClaimValuesAttribute>().ClaimsValues;
-
-                var description =
-                x.GetCustomAttribute<DescriptionAttribute>().Description;
-
-                var _ControllerScope = permissionValues[1];
-
-                if (!ControllerScopes.Any(scope => scope.Name.Equals(_ControllerScope)))
-                {
-                    var ControllerDescription = description.Split(new string[] { "-" },
-                        StringSplitOptions.RemoveEmptyEntries)[0].Trim();
-
-                    ControllerScopes.Add(new Scope(_ControllerScope, ControllerDescription + " - 所有权限"));
-                }
-
-                return new Scope(permissionValues[0], description);
-
-            }).ToList();
-
-            var ApplicationScope = new Scope(MicroServiceName + ".all", "所有权限");
-
-            ActionScopes.AddRange(ControllerScopes);
-
-            ActionScopes.Add(ApplicationScope);
-
-            ActionScopes = ActionScopes.OrderBy(x => x.Name).ToList();
-
             return new List<ApiResource>
                 {
                     new ApiResource()
                     {
-                        Enabled =true,
+                        Enabled = true,
+
                         ApiSecrets = {},
-                        Name = MicroServiceName,
-                        DisplayName = MicroServiceName,
-                        Description = MicroServiceName,
-                        Scopes = ActionScopes,
-                        //需要使用的用户claims
-                        UserClaims= {
-                            ClaimTypes.UserPermission,
-                            "role"
-                        }
+
+                        Name = AppConstant.MicroServiceName,
+
+                        DisplayName = AppConstant.MicroServiceName,
+
+                        Description = AppConstant.MicroServiceName,
+
+                        Scopes = new List<string>()
+                        {
+                            $"{AppConstant.MicroServiceName}.all"
+                        },
+                         
+                        Properties =new Dictionary<string,string>()
+                    }
+                };
+        }
+
+        public static IEnumerable<ApiScope> GetApiScopes()
+        {
+            return new List<ApiScope>
+                {
+                    new ApiScope()
+                    {
+                        Enabled = true,
+
+                        Name =  $"{AppConstant.MicroServiceName}.all",
+
+                        DisplayName = AppConstant.MicroServiceName,
+
+                        Description = AppConstant.MicroServiceName,
+
+                         UserClaims=new List<string>()
+                         {
+                             "role","permission"
+                         },
+
+                        Properties =new Dictionary<string,string>()
                     }
                 };
         }
@@ -334,30 +237,31 @@ namespace IdentityServer4.MicroService
         /// <summary>
         /// 数据库初始化
         /// </summary>
-        public static void InitializeDatabase(IApplicationBuilder app, IConfigurationRoot config)
+        public static void InitializeDatabase(IApplicationBuilder app, IdentityServer4MicroServiceOptions options)
         {
-            Tenant.InitOAuthens();
+            Tenant.AppHostName = Tenant.IdentityServerIssuerUri = options.IdentityServerUri.Authority;
 
-            Tenant.AppHostName = config["IdentityServer"];
-
-            Tenant.IdentityServerIssuerUri = Tenant.AppHostName;
-
-            TestClient.RedirectUris[0] = string.Format(TestClient.RedirectUris[0], Tenant.AppHostName);
+            Tenant.WebSite = options.IdentityServerUri.OriginalString;
 
             using (var scope = app.ApplicationServices.GetService<IServiceScopeFactory>().CreateScope())
             {
-                #region identityserver
+                #region PersistedGrantDb
                 scope.ServiceProvider.GetRequiredService<PersistedGrantDbContext>().Database.Migrate();
+                #endregion
+
                 var context = scope.ServiceProvider.GetRequiredService<ConfigurationDbContext>();
+
                 context.Database.Migrate();
+
                 if (!context.Clients.Any())
                 {
-                    foreach (var client in GetClients())
+                    foreach (var client in GetClients(options.IdentityServerUri))
                     {
                         context.Clients.Add(client.ToEntity());
                     }
                     context.SaveChanges();
                 }
+
                 if (!context.IdentityResources.Any())
                 {
                     foreach (var resource in GetIdentityResources())
@@ -366,6 +270,7 @@ namespace IdentityServer4.MicroService
                     }
                     context.SaveChanges();
                 }
+
                 if (!context.ApiResources.Any())
                 {
                     foreach (var resource in GetApiResources())
@@ -374,149 +279,133 @@ namespace IdentityServer4.MicroService
                     }
                     context.SaveChanges();
                 }
-                #endregion
 
-                #region tenant
+                if (!context.ApiScopes.Any())
+                {
+                    foreach (var resource in GetApiScopes())
+                    {
+                        context.ApiScopes.Add(resource.ToEntity());
+                    }
+                    context.SaveChanges();
+                }
+
+                #region TenantDb
                 var tenantDbContext = scope.ServiceProvider.GetRequiredService<TenantDbContext>();
                 tenantDbContext.Database.Migrate();
-                if (!tenantDbContext.Tenants.Any())
-                {
-                    #region Create Default Tenant
-                    var tenant = new AppTenant()
-                    {
-                        CacheDuration = 600,
-                        CreateDate = DateTime.UtcNow,
-                        IdentityServerIssuerUri = Tenant.IdentityServerIssuerUri,
-                        LastUpdateTime = DateTime.UtcNow,
-                        Name = Tenant.Name,
-                        OwnerUserId = AppConstant.seedUserId, //默认设置为1
-                        Status = TenantStatus.Enable,
-                        Theme = "default"
-                    };
-                    tenant.Hosts.Add(new AppTenantHost() { HostName = Tenant.AppHostName });
-                    tenant.Properties.AddRange(Tenant.TenantProperties.Select(x => new AppTenantProperty() { Key = x.Key, Value = x.Value }));
-                    tenantDbContext.Tenants.Add(tenant);
-                    tenantDbContext.SaveChanges();
-                    #endregion
-                }
+                Data_Seeding_Tenants(tenantDbContext);
                 #endregion
 
-                var userContext = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+                #region IdentityDb
+                var userContext = scope.ServiceProvider.GetRequiredService<UserDbContext>();
+                var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
                 userContext.Database.Migrate();
-
-                if (!userContext.Roles.Any())
-                {
-                    foreach (var role in GetRoles())
-                    {
-                        userContext.Roles.Add(role);
-                    }
-                    userContext.SaveChanges();
-                }
-
-                if (!userContext.Users.Any())
-                {
-                    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-
-                    var roleIds = userContext.Roles.Select(x => x.Id).ToList();
-
-                    var permissions = typeof(UserPermissions).GetFields().Select(x => x.GetCustomAttribute<PolicyClaimValuesAttribute>().ClaimsValues[0]).ToList();
-                    permissions.Add(MicroServiceName + ".all");
-
-                    var tenantIds = tenantDbContext.Tenants.Select(x => x.Id).ToList();
-
-                    foreach (var _user in GetUsers())
-                    {
-                        var r = AppUserService.CreateUser(AppConstant.seedTenantId,
-                             userManager,
-                             userContext,
-                             _user,
-                             roleIds,
-                            string.Join(",", permissions),
-                            tenantIds).Result;
-
-                        #region User Clients
-                        var clientIds = context.Clients.Select(x => x.Id).ToList();
-                        foreach (var cid in clientIds)
-                        {
-                            _user.Clients.Add(new AspNetUserClient()
-                            {
-                                ClientId = cid
-                            });
-                        }
-                        #endregion
-
-                        #region User ApiResources
-                        var apiIds = context.ApiResources.Select(x => x.Id).ToList();
-                        foreach (var apiId in apiIds)
-                        {
-                            _user.ApiResources.Add(new AspNetUserApiResource()
-                            {
-                                ApiResourceId = apiId,
-                            });
-                        }
-                        #endregion
-
-                        userContext.SaveChanges();
-                    }
-                }
+                Data_Seeding_Users(userContext, tenantDbContext, userManager, context, options);
+                #endregion
             }
         }
 
-        /// <summary>
-        /// 邮件发送模板
-        /// 需要对接sendcloud平台
-        /// https://sendcloud.sohu.com
-        /// </summary>
-        public enum SendCloudMailTemplates
+        static void Data_Seeding_Tenants(TenantDbContext tenantDbContext)
         {
-            #region 用户注册 - 邮箱验证
-            /// <summary>
-            /// 用户注册 - 邮箱验证
-            /// 变量：%code%
-            /// </summary>
-            [EmailConfig("邮箱验证")]
-            verify_email,
-            #endregion
+            if (!tenantDbContext.Tenants.Any())
+            {
+                var tenant = new AppTenant()
+                {
+                    CacheDuration = 600,
+                    CreateDate = DateTime.UtcNow,
+                    IdentityServerIssuerUri = Tenant.IdentityServerIssuerUri,
+                    LastUpdateTime = DateTime.UtcNow,
+                    Name = Tenant.Name,
+                    OwnerUserId = AppConstant.seedUserId, //默认设置为1
+                    Status = TenantStatus.Enable,
+                    Theme = "default"
+                };
 
-            #region 订阅微服务 - 邮箱验证
-            /// <summary>
-            /// 订阅微服务 - 邮箱验证
-            /// 变量：
-            /// %SubscritionUrl%
-            /// %DelSubscritionUrl%
-            /// %apiId%
-            /// %serviceName%
-            /// </summary>
-            [EmailConfig("验证邮箱")]
-            verify_apiresource_subscription,
-            #endregion
+                tenant.Hosts.Add(new AppTenantHost() { HostName = Tenant.AppHostName });
 
-            #region 忘记密码
-            /// <summary>
-            /// 忘记密码
-            /// 变量：%callbackUrl%
-            /// </summary>
-            [EmailConfig("reset password")]
-            reset_password,
-            #endregion
+                tenant.Properties.AddRange(Tenant.TenantProperties.Select(x => new AppTenantProperty()
+                {
+                    Key = x.Key,
+                    Value = x.Value
+                }));
 
-            #region 用户登录 - 邮箱安全码
-            /// <summary>
-            /// 用户登录 - 邮箱安全码
-            /// 变量：%code%
-            /// </summary>
-            [EmailConfig("登录验证码")]
-            security_code,
-            #endregion
+                tenantDbContext.Tenants.Add(tenant);
+                tenantDbContext.SaveChanges();
+            }
+        }
 
-            #region 用户注册 - 激活邮箱
-            /// <summary>
-            /// 用户注册 - 激活邮箱
-            /// 变量：%name%,%url%
-            /// </summary>
-            [EmailConfig("%name%请激活您的邮箱")]
-            test_template_active,
-            #endregion
+        static void Data_Seeding_Users(
+            UserDbContext userContext, 
+            TenantDbContext tenantDbContext,
+            UserManager<AppUser> userManager,
+            ConfigurationDbContext identityserverDbContext,
+            IdentityServer4MicroServiceOptions options)
+        {
+            if (!userContext.Roles.Any())
+            {
+                var roles = typeof(DefaultRoles).GetFields();
+
+                foreach (var role in roles)
+                {
+                    var roleName = role.GetRawConstantValue().ToString();
+
+                    userContext.Roles.Add(new AppRole
+                    {
+                        Name = roleName,
+                        NormalizedName = roleName,
+                        ConcurrencyStamp = Guid.NewGuid().ToString()
+                    });
+                }
+
+                userContext.SaveChanges();
+            }
+
+            if (!userContext.Users.Any())
+            {
+                var roleIds = userContext.Roles.Select(x => x.Id).ToList();
+
+                var tenantIds = tenantDbContext.Tenants.Select(x => x.Id).ToList();
+
+                var user = new AppUser()
+                {
+                    Email = options.DefaultUserAccount,
+                    UserName = options.DefaultUserAccount,
+                    PasswordHash = options.DefaultUserPassword,
+                    EmailConfirmed = true,
+                    ParentUserID = AppConstant.seedUserId
+                };
+
+                var r = AppUserService.CreateUser(AppConstant.seedTenantId,
+                     userManager,
+                     userContext,
+                     user,
+                     roleIds,
+                    $"{AppConstant.MicroServiceName}.all",
+                    tenantIds).Result;
+
+                #region User Clients
+                var clientIds = identityserverDbContext.Clients.Select(x => x.Id).ToList();
+                foreach (var cid in clientIds)
+                {
+                    user.Clients.Add(new AspNetUserClient()
+                    {
+                        ClientId = cid
+                    });
+                }
+                #endregion
+
+                #region User ApiResources
+                var apiIds = identityserverDbContext.ApiResources.Select(x => x.Id).ToList();
+                foreach (var apiId in apiIds)
+                {
+                    user.ApiResources.Add(new AspNetUserApiResource()
+                    {
+                        ApiResourceId = apiId,
+                    });
+                }
+                #endregion
+
+                userContext.SaveChanges();
+            }
         }
     }
 }

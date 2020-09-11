@@ -2,7 +2,6 @@
 using System.Text;
 using System.Linq;
 using System.Data;
-using System.Data.SqlClient;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +9,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
-using Microsoft.WindowsAzure.Storage.Table;
+using Microsoft.Extensions.Caching.Distributed;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Swashbuckle.AspNetCore.SwaggerGen;
+using Swashbuckle.AspNetCore.Annotations;
 using IdentityServer4.MicroService.Data;
 using IdentityServer4.MicroService.Tenant;
 using IdentityServer4.MicroService.Enums;
@@ -26,28 +25,35 @@ using IdentityServer4.MicroService.Models.Apis.Common;
 using IdentityServer4.MicroService.Models.Apis.ApiResourceController;
 using IdentityServer4.MicroService.Models.Apis.CodeGenController;
 using static IdentityServer4.MicroService.AppConstant;
-using static IdentityServer4.MicroService.MicroserviceConfig;
-using static IdentityServer4.MicroService.AppDefaultData;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Azure.Cosmos.Table;
 
 namespace IdentityServer4.MicroService.Apis
 {
-    // ApiResource 根据 userId 来获取列表、或详情、增删改
-
     /// <summary>
-    /// 微服务
+    /// API
     /// </summary>
-    /// <remarks>为微服务提供版本管理、网关集成都功能。</remarks>
-    [Route("ApiResource")]
+    /// <remarks>为API提供版本管理、网关集成都功能。</remarks>
     [Produces("application/json")]
-    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = Roles.Users)]
-    public class ApiResourceController : BasicController
+    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = DefaultRoles.User)]
+    [ApiExplorerSettingsDynamic("ApiResource")]
+    [SwaggerTag("资源")]
+    public class ApiResourceController : ApiControllerBase
     {
+        //sql cache options
+        readonly DistributedCacheEntryOptions cacheOptions = new DistributedCacheEntryOptions()
+        {
+            AbsoluteExpiration = DateTimeOffset.MaxValue
+        };
+
         #region Services
         //Database
         readonly ConfigurationDbContext configDb;
         readonly SwaggerCodeGenService swagerCodeGen;
         readonly AzureStorageService storageService;
         readonly EmailService email;
+        readonly IDistributedCache cache;
+        readonly IHttpContextAccessor accessor;
         #endregion
 
         #region 构造函数
@@ -59,52 +65,58 @@ namespace IdentityServer4.MicroService.Apis
         /// <param name="localizer"></param>
         /// <param name="_tenantService"></param>
         /// <param name="_tenantDb"></param>
-        /// <param name="_redis"></param>
         /// <param name="_swagerCodeGen"></param>
         /// <param name="_storageService"></param>
         /// <param name="_email"></param>
         /// <param name="_provider"></param>
+        /// <param name="_cache"></param>
+        /// <param name="_accessor"></param>
         public ApiResourceController(
             ConfigurationDbContext _configDb,
-            IdentityDbContext _userDb,
+            UserDbContext _userDb,
             IStringLocalizer<ApiResourceController> localizer,
             TenantService _tenantService,
             TenantDbContext _tenantDb,
-            RedisService _redis,
+            //RedisService _redis,
             SwaggerCodeGenService _swagerCodeGen,
             AzureStorageService _storageService,
             EmailService _email,
-            IDataProtectionProvider _provider)
+            IDataProtectionProvider _provider,
+            IDistributedCache _cache,
+            IHttpContextAccessor _accessor)
         {
             configDb = _configDb;
             db = _userDb;
             l = localizer;
             tenantDb = _tenantDb;
             tenantService = _tenantService;
-            redis = _redis;
+            //redis = _redis;
             swagerCodeGen = _swagerCodeGen;
             storageService = _storageService;
             email = _email;
             protector = _provider.CreateProtector(GetType().FullName).ToTimeLimitedDataProtector();
+
+            cache = _cache;
+
+            accessor = _accessor;
         }
         #endregion
 
-        #region 微服务
-        #region 微服务 - 列表
+        #region API
+        #region API - 列表
         /// <summary>
-        /// 微服务 - 列表
+        /// API - 列表
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.get</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.get</code>
-        /// </remarks>
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceGet)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceGet)]
-        [SwaggerOperation("ApiResource/Get")]
-        public async Task<PagingResult<ApiResource>> Get(PagingRequest<ApiResourceGetRequest> value)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.get")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.get")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceGet", 
+            Summary = "API - 列表",
+            Description = "scope&permission：isms.apiresource.get")]
+        public async Task<PagingResult<ApiResource>> Get([FromQuery]PagingRequest<ApiResourceGetRequest> value)
         {
             if (!ModelState.IsValid)
             {
@@ -179,20 +191,18 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 详情
+        #region API - 详情
         /// <summary>
-        /// 微服务 - 详情
+        /// API - 详情
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.detail</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.detail</code>
-        /// </remarks>
         [HttpGet("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceDetail)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceDetail)]
-        [SwaggerOperation("ApiResource/Detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.detail")]
+        [SwaggerOperation(OperationId = "ApiResourceDetail",
+            Summary = "API - 详情",
+            Description = "scope&permission：isms.apiresource.detail")]
         public async Task<ApiResult<ApiResource>> Get(long id)
         {
             if (!await exists(id))
@@ -204,7 +214,7 @@ namespace IdentityServer4.MicroService.Apis
 
             var entity = await query
                 .Where(x => x.Id == id)
-                .Include(x => x.Scopes).ThenInclude(x => x.UserClaims)
+                .Include(x => x.Scopes).ThenInclude(x => x.Scope)
                 .Include(x => x.Secrets)
                 .Include(x => x.UserClaims)
                 .FirstOrDefaultAsync();
@@ -218,21 +228,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 创建
+        #region API - 创建
         /// <summary>
-        /// 微服务 - 创建
+        /// API - 创建
         /// </summary>
         /// <param name="value">ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.post</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.post</code>
-        /// </remarks>
         [HttpPost]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePost)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePost)]
-        [SwaggerOperation("ApiResource/Post")]
-        public async Task<ApiResult<long>> Post([FromBody]ApiResource value)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.post")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.post")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePost", 
+            Summary = "API - 创建",
+            Description = "scope&permission：isms.apiresource.post")]
+        public ApiResult<long> Post([FromBody]ApiResource value)
         {
             if (!ModelState.IsValid)
             {
@@ -242,7 +251,18 @@ namespace IdentityServer4.MicroService.Apis
 
             configDb.Add(value);
 
-            await configDb.SaveChangesAsync();
+            try
+            {
+                configDb.SaveChanges();
+            }
+
+            catch (Exception ex)
+            {
+                return new ApiResult<long>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                {
+                    data = 0
+                };
+            }
 
             db.UserApiResources.Add(new AspNetUserApiResource()
             {
@@ -250,339 +270,459 @@ namespace IdentityServer4.MicroService.Apis
                 UserId = UserId
             });
 
-            await db.SaveChangesAsync();
+            try
+            {
+                db.SaveChanges();
+            }
+
+            catch (Exception ex)
+            {
+                return new ApiResult<long>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                {
+                    data = 0
+                };
+            }
 
             return new ApiResult<long>(value.Id);
         }
         #endregion
 
-        #region 微服务 - 更新
+        #region API - 更新
         /// <summary>
-        /// 微服务 - 更新
+        /// API - 更新
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.put</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.put</code>
-        /// </remarks>
         [HttpPut]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePut)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePut)]
-        [SwaggerOperation("ApiResource/Put")]
-        public async Task<ApiResult<long>> Put([FromBody]ApiResource value)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.put")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.put")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePut",
+            Summary = "API - 更新",
+            Description = "scope&permission：isms.apiresource.put")]
+        public async Task<ApiResult<bool>> Put([FromBody]ApiResource value)
         {
             if (!ModelState.IsValid)
             {
-                return new ApiResult<long>(l,
+                return new ApiResult<bool>(l,
                     BasicControllerEnums.UnprocessableEntity,
                     ModelErrors());
             }
 
             if (!await exists(value.Id))
             {
-                return new ApiResult<long>(l, BasicControllerEnums.NotFound);
+                return new ApiResult<bool>(l, BasicControllerEnums.NotFound);
             }
 
-            using (var tran = configDb.Database.BeginTransaction(IsolationLevel.ReadCommitted))
+            var Entity = configDb.ApiResources.Where(x => x.Id == value.Id)
+                .Include(x => x.Scopes).ThenInclude(x => x.Scope)
+                .Include(x => x.Secrets)
+                .Include(x => x.UserClaims)
+                .FirstOrDefault();
+
+            if (Entity == null)
             {
-                try
-                {
-                    #region Update Entity
-                    // 需要先更新value，否则更新如claims等属性会有并发问题
-                    configDb.Update(value);
-                    configDb.SaveChanges();
-                    #endregion
-
-                    #region Find Entity.Source
-                    var source = await configDb.ApiResources.Where(x => x.Id == value.Id)
-                                     .Include(x => x.Scopes).ThenInclude(x => x.UserClaims)
-                                     .Include(x => x.Secrets)
-                                     .Include(x => x.UserClaims)
-                                     .AsNoTracking()
-                                     .FirstOrDefaultAsync();
-                    #endregion
-
-                    #region Update Entity.Claims
-                    if (value.UserClaims != null && value.UserClaims.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.UserClaims.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.UserClaims.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE ApiClaims WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                configDb.Database.ExecuteSqlCommand($"DELETE ApiClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.UserClaims.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                configDb.Database.ExecuteSqlCommand($"UPDATE ApiClaims SET [Type]={x.Type} WHERE Id = {x.Id}");
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.UserClaims.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                configDb.Database.ExecuteSqlCommand($"INSERT INTO ApiClaims VALUES ({source.Id},{x.Type})");
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    #region Update Entity.Secrets
-                    if (value.Secrets != null && value.Secrets.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.Secrets.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.Secrets.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE ApiSecrets WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                configDb.Database.ExecuteSqlCommand($"DELETE ApiSecrets WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.Secrets.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                //var _params = new SqlParameter[] {
-                                //  new SqlParameter("@Description", DBNull.Value) { IsNullable = true },
-                                //  new SqlParameter("@Expiration", DBNull.Value) { IsNullable = true },
-                                //  new SqlParameter("@Type",  DBNull.Value) { IsNullable = true },
-                                //  new SqlParameter("@Value",  DBNull.Value) { IsNullable = true },
-                                //};
-
-                                //if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
-                                //if (x.Expiration.HasValue) { _params[1].Value = x.Expiration; }
-                                //if (!string.IsNullOrWhiteSpace(x.Type)) { _params[2].Value = x.Type; }
-                                //if (!string.IsNullOrWhiteSpace(x.Value)) { _params[3].Value = x.Value; }
-
-                                //var sql = new RawSqlString("UPDATE ApiSecrets SET [Description]=@Description,[Expiration]=@Expiration,[Type]=@Type,[Value]=@Value WHERE Id = " + x.Id);
-
-                                configDb.Database.ExecuteSqlCommand($"UPDATE ApiSecrets SET [Description]={x.Description},[Expiration]={x.Expiration},[Type]={x.Type},[Value]={x.Value} WHERE Id = {x.Id}");
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.Secrets.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                //var _params = new SqlParameter[] {
-                                //   new SqlParameter("@ApiResourceId", source.Id),
-                                //   new SqlParameter("@Description", DBNull.Value) { IsNullable = true },
-                                //   new SqlParameter("@Expiration", DBNull.Value) { IsNullable = true },
-                                //   new SqlParameter("@Type", DBNull.Value){ IsNullable = true },
-                                //   new SqlParameter("@Value", DBNull.Value){ IsNullable = true },
-                                //};
-
-                                //if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
-                                //if (x.Expiration.HasValue) { _params[1].Value = x.Expiration; }
-                                //if (!string.IsNullOrWhiteSpace(x.Type)) { _params[2].Value = x.Type; }
-                                //if (!string.IsNullOrWhiteSpace(x.Value)) { _params[3].Value = x.Value; }
-
-                                //var sql = new RawSqlString("INSERT INTO ApiSecrets VALUES (@ApiResourceId,@Description,@Expiration,@Type,@Value)");
-
-                                configDb.Database.ExecuteSqlCommand($"INSERT INTO ApiSecrets VALUES ({source.Id},{x.Description},{x.Expiration},{x.Type},{x.Value})");
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    #region Update Entity.Scopes
-                    if (value.Scopes != null && value.Scopes.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.Scopes.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.Scopes.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE ApiScopeClaims WHERE ApiScopeId IN ({0})",
-                                //           string.Join(",", DeleteEntities));
-
-                                configDb.Database.ExecuteSqlCommand($"DELETE ApiScopeClaims WHERE ApiScopeId IN ({string.Join(",", DeleteEntities)})");
-
-                                //sql = string.Format("DELETE ApiScopes WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                configDb.Database.ExecuteSqlCommand($"DELETE ApiScopes WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.Scopes.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                //var _params = new SqlParameter[] {
-                                //  new SqlParameter("@Description", DBNull.Value) { IsNullable = true },
-                                //  new SqlParameter("@DisplayName", DBNull.Value) { IsNullable = true },
-                                //  new SqlParameter("@Emphasize", x.Emphasize),
-                                //  new SqlParameter("@Name", x.Name),
-                                //  new SqlParameter("@Required", x.Required),
-                                //  new SqlParameter("@ShowInDiscoveryDocument", x.ShowInDiscoveryDocument)
-                                //};
-
-                                //if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
-                                //if (!string.IsNullOrWhiteSpace(x.DisplayName)) { _params[1].Value = x.DisplayName; }
-
-                                //var sql = new RawSqlString("UPDATE ApiScopes SET [Description]=@Description,[DisplayName]=@DisplayName,[Emphasize]=@Emphasize,[Name]=@Name,[Required]=@Required,[ShowInDiscoveryDocument]=@ShowInDiscoveryDocument WHERE Id = " + x.Id);
-
-                                configDb.Database.ExecuteSqlCommand($"UPDATE ApiScopes SET [Description]={x.Description},[DisplayName]={x.DisplayName},[Emphasize]={x.Emphasize},[Name]={x.Name},[Required]={x.Required},[ShowInDiscoveryDocument]={x.ShowInDiscoveryDocument} WHERE Id = {x.Id}");
-
-                                configDb.Database.ExecuteSqlCommand($"DELETE ApiScopeClaims WHERE ApiScopeId = {x.Id}");
-
-                                x.UserClaims.ForEach(claim =>
-                                {
-                                    configDb.Database.ExecuteSqlCommand($"INSERT INTO ApiScopeClaims VALUES ({x.Id},{claim.Type})");
-                                });
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.Scopes.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                var _params = new SqlParameter[]
-                                {
-                                  new SqlParameter("@Description",DBNull.Value) { IsNullable = true },
-                                  new SqlParameter("@DisplayName",DBNull.Value) { IsNullable = true },
-                                  new SqlParameter("@Emphasize",x.Emphasize),
-                                  new SqlParameter("@Name", x.Name),
-                                  new SqlParameter("@Required", x.Required),
-                                  new SqlParameter("@ShowInDiscoveryDocument", x.ShowInDiscoveryDocument),
-                                  new SqlParameter() { Direction = ParameterDirection.ReturnValue },
-                                };
-
-                                if (!string.IsNullOrWhiteSpace(x.Description)) { _params[0].Value = x.Description; }
-                                if (!string.IsNullOrWhiteSpace(x.DisplayName)) { _params[1].Value = x.DisplayName; }
-
-                                var sql = new RawSqlString("INSERT INTO ApiScopes VALUES (@ApiResourceId,@Description,@DisplayName,@Emphasize,@Name,@Required,@ShowInDiscoveryDocument)\r\n" +
-                                  "SELECT @@identity");
-
-                                configDb.Database.ExecuteSqlCommand(sql, _params);
-
-                                if (_params[_params.Length - 1].Value != null)
-                                {
-                                    var _ApiScopeId = long.Parse(_params[_params.Length - 1].Value.ToString());
-
-                                    x.UserClaims.ForEach(claim =>
-                                    {
-                                        configDb.Database.ExecuteSqlCommand(
-                                        new RawSqlString("INSERT INTO ApiScopeClaims VALUES (@ApiScopeId,@Type)"),
-                                        new SqlParameter("@ApiScopeId", _ApiScopeId),
-                                        new SqlParameter("@Type", claim.Type));
-                                    });
-                                }
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    tran.Commit();
-                }
-
-                catch (Exception ex)
-                {
-                    tran.Rollback();
-
-                    return new ApiResult<long>(l,
-                        BasicControllerEnums.ExpectationFailed,
-                        ex.Message);
-                }
+                return new ApiResult<bool>(l, BasicControllerEnums.NotFound);
             }
 
-            return new ApiResult<long>(value.Id);
+            #region Name
+            if (!string.IsNullOrWhiteSpace(value.Name) && !value.Name.Equals(Entity.Name))
+            {
+                Entity.Name = value.Name;
+            }
+            #endregion
+
+            #region DisplayName
+            if (!string.IsNullOrWhiteSpace(value.DisplayName) && !value.DisplayName.Equals(Entity.DisplayName))
+            {
+                Entity.DisplayName = value.DisplayName;
+            }
+            #endregion
+
+            #region Description
+            if (!string.IsNullOrWhiteSpace(value.Description) && !value.Description.Equals(Entity.Description))
+            {
+                Entity.Description = value.Description;
+            }
+            #endregion
+
+            #region Enabled
+            if (value.Enabled != Entity.Enabled)
+            {
+                Entity.Enabled = value.Enabled;
+            }
+            #endregion
+
+            #region NonEditable
+            if (value.NonEditable != Entity.NonEditable)
+            {
+                Entity.NonEditable = value.NonEditable;
+            }
+            #endregion
+
+            #region LastAccessed
+            if (value.LastAccessed != Entity.LastAccessed)
+            {
+                Entity.LastAccessed = value.LastAccessed;
+            }
+            #endregion
+
+            #region Scopes
+            if (value.Scopes != null && value.Scopes.Count > 0)
+            {
+                Entity.Scopes.Clear();
+
+                value.Scopes.ForEach(x =>
+                {
+                    Entity.Scopes.Add(new ApiResourceScope()
+                    {
+                        ApiResource = value,
+                        ApiResourceId = x.ApiResourceId,
+                        Scope = x.Scope
+                    });
+                });
+            }
+            #endregion
+
+            #region Secrets
+            if (value.Secrets != null && value.Secrets.Count > 0)
+            {
+                Entity.Secrets.Clear();
+
+                value.Secrets.ForEach(x =>
+                {
+                    Entity.Secrets.Add(new ApiResourceSecret()
+                    {
+                        ApiResource = value,
+                        ApiResourceId = x.ApiResourceId,
+                        Created = x.Created,
+                        Description = x.Description,
+                        Expiration = x.Expiration,
+                        Type = x.Type,
+                        Value = x.Value
+                    });
+                });
+            }
+            #endregion
+
+            #region UserClaims
+            if (value.UserClaims != null && value.UserClaims.Count > 0)
+            {
+                Entity.UserClaims.Clear();
+
+                value.UserClaims.ForEach(x =>
+                {
+                    Entity.UserClaims.Add(new ApiResourceClaim()
+                    {
+                        ApiResource = value,
+                        ApiResourceId = x.ApiResourceId,
+                        Type = x.Type
+                    });
+                });
+            }
+            #endregion
+
+            Entity.Updated = DateTime.UtcNow.AddHours(8);
+
+            try
+            {
+                configDb.SaveChanges();
+            }
+
+            catch (Exception ex)
+            {
+                return new ApiResult<bool>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                {
+                    data = false
+                };
+            }
+
+            return new ApiResult<bool>(true);
         }
         #endregion
 
-        #region 微服务 - 删除
+        #region API - 删除
         /// <summary>
-        /// 微服务 - 删除
+        /// API - 删除
         /// </summary>
         /// <param name="id">ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.delete</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.delete</code>
-        /// </remarks>
         [HttpDelete("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceDelete)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceDelete)]
-        [SwaggerOperation("ApiResource/Delete")]
-        public async Task<ApiResult<long>> Delete(long id)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.delete")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.delete")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceDelete", 
+            Summary = "API - 删除",
+            Description = "scope&permission：isms.apiresource.delete")]
+        public async Task<ApiResult<bool>> Delete(long id)
         {
             if (!await exists(id))
             {
-                return new ApiResult<long>(l, BasicControllerEnums.NotFound);
+                return new ApiResult<bool>(l, BasicControllerEnums.NotFound);
             }
 
-            var entity = await configDb.ApiResources.FirstOrDefaultAsync(x => x.Id == id);
+            var entity = configDb.ApiResources.Where(x => x.Id == id)
+                .Include(x => x.Scopes).ThenInclude(x => x.Scope)
+                .Include(x => x.Secrets)
+                .Include(x => x.UserClaims)
+                .FirstOrDefault(); ;
 
             if (entity == null)
             {
-                return new ApiResult<long>(l, BasicControllerEnums.NotFound);
+                return new ApiResult<bool>(l, BasicControllerEnums.NotFound);
             }
 
             configDb.ApiResources.Remove(entity);
 
-            await db.SaveChangesAsync();
+            try
+            {
+                configDb.SaveChanges();
+            }
 
-            return new ApiResult<long>(id);
+            catch (Exception ex)
+            {
+                return new ApiResult<bool>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                {
+                    data = false
+                };
+            }
+
+            #region relation
+            var relation = db.UserApiResources.Where(x => x.UserId == UserId && x.ApiResourceId == id).FirstOrDefault();
+
+            if (relation != null)
+            {
+                db.Remove(relation);
+
+                try
+                {
+                    db.SaveChanges();
+                }
+
+                catch (Exception ex)
+                {
+                    return new ApiResult<bool>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                    {
+                        data = false
+                    };
+                }
+            } 
+            #endregion
+
+            return new ApiResult<bool>(true);
         }
         #endregion
 
-        #region 微服务 - 权限代码
+        #region API - 导入
         /// <summary>
-        /// 微服务 - 权限代码
+        /// API - 导入
+        /// </summary>
+        /// <param name="value"></param>
+        /// <returns></returns>
+        [HttpPost("Import")]
+        [AllowAnonymous]
+        [SwaggerOperation(
+            OperationId = "ApiResourceImport", 
+            Summary = "API - 导入",
+            Description ="")]
+        public ApiResult<bool> Import([FromBody]ApiResourceImportRequest value)
+        {
+            var data = configDb.ApiResources.Where(x => x.Name.Equals(value.MicroServiceName))
+                .Include(x => x.Scopes).FirstOrDefault();
+
+            if (data == null)
+            {
+                var entity = new ApiResource()
+                {
+                    Name = value.MicroServiceName,
+                    DisplayName = value.MicroServiceDisplayName,
+                    Description = value.MicroServiceDescription,
+                    Created = DateTime.UtcNow,
+                    LastAccessed = DateTime.UtcNow,
+                    Updated = DateTime.UtcNow,
+                    Enabled = true,
+                    Scopes = new List<ApiResourceScope>(),
+                };
+
+                #region role、permission
+                entity.UserClaims = new List<ApiResourceClaim>()
+                {
+                    new ApiResourceClaim()
+                    {
+                        ApiResource = entity,
+                        Type = "role"
+                    },
+                    new ApiResourceClaim()
+                    {
+                        ApiResource = entity,
+                        Type = "permission"
+                    }
+                };
+                #endregion
+
+                #region scopes
+                if (value.MicroServicePolicies.Count > 0)
+                {
+                    value.MicroServicePolicies.ForEach(policy =>
+                    {
+                        policy.Scopes.ForEach(scope =>
+                        {
+                            var scopeName = $"{value.MicroServiceName}.{scope}";
+
+                            entity.Scopes.Add(new ApiResourceScope()
+                            {
+                                ApiResource = entity,
+                                Scope = scopeName
+                            });
+                        });
+
+                        var scopeControllName = $"{value.MicroServiceName}.{policy.ControllerName}.all";
+
+                        entity.Scopes.Add(new ApiResourceScope()
+                        {
+                            ApiResource = entity,
+                            Scope = scopeControllName
+                        });
+                    });
+                }
+
+                var scopeApiResourceName = $"{value.MicroServiceName}.all";
+
+                entity.Scopes.Add(new ApiResourceScope()
+                {
+                    ApiResource = entity,
+                    Scope = scopeApiResourceName
+                });
+                #endregion
+
+                configDb.Add(entity);
+
+                configDb.SaveChanges();
+
+                #region update user permission for new ApiResource
+                var userClaims = db.UserClaims.Where(x => x.ClaimType.Equals("permission") &&
+                        !x.ClaimValue.Contains(scopeApiResourceName)).ToList();
+
+                if (userClaims.Count > 0)
+                {
+                    userClaims.ForEach(x =>
+                    {
+                        var permissions = x.ClaimValue.Split(new string[1] { "," }, StringSplitOptions.RemoveEmptyEntries).ToList();
+
+                        if (!permissions.Contains(scopeApiResourceName))
+                        {
+                            permissions.Add(scopeApiResourceName);
+
+                            x.ClaimValue = string.Join(",", permissions);
+                        }
+                    });
+
+                    db.SaveChanges();
+                }
+                #endregion
+            }
+
+            else
+            {
+                data.DisplayName = value.MicroServiceDisplayName;
+
+                data.Description = value.MicroServiceDescription;
+
+                data.Updated = DateTime.UtcNow;
+
+                data.Scopes.Clear();
+
+                value.MicroServicePolicies.ForEach(policy =>
+                {
+                    policy.Scopes.ForEach(scope =>
+                    {
+                        var scopeName = $"{value.MicroServiceName}.{scope}";
+
+                        data.Scopes.Add(new ApiResourceScope()
+                        {
+                            ApiResource = data,
+                            Scope = scopeName
+                        });
+                    });
+
+                    var scopeControllName = $"{value.MicroServiceName}.{policy.ControllerName}.all";
+
+                    data.Scopes.Add(new ApiResourceScope()
+                    {
+                        ApiResource = data,
+                        Scope = scopeControllName
+                    });
+                });
+
+                var scopeApiResourceName = $"{value.MicroServiceName}.all";
+
+                data.Scopes.Add(new ApiResourceScope()
+                {
+                    ApiResource = data,
+                    Scope = scopeApiResourceName
+                });
+
+                configDb.SaveChanges();
+            }
+
+            #region redirectUrl&scope for client-swagger
+            value.MicroServiceClientIDs.ForEach(clientId =>
+            {
+                var client = configDb.Clients
+                .Where(x => x.ClientName.Equals(clientId))
+                .Include(x => x.RedirectUris)
+                .Include(x => x.AllowedScopes).FirstOrDefault();
+
+                #region client redirectUrls
+                value.MicroServiceRedirectUrls.ForEach(redirectUrl =>
+                {
+                    var redirectUrlItem = client.RedirectUris
+                    .Where(x => x.RedirectUri.Equals(redirectUrl)).FirstOrDefault();
+
+                    if (redirectUrlItem == null)
+                    {
+                        client.RedirectUris.Add(new ClientRedirectUri()
+                        {
+                            RedirectUri = redirectUrl,
+                            Client = client
+                        });
+                    }
+                });
+                #endregion
+
+                #region client scope
+                var scope = $"{value.MicroServiceName}.all";
+                var scopeItem = client.AllowedScopes.FirstOrDefault(x => x.Scope.Equals(scope));
+                if (scopeItem == null)
+                {
+                    client.AllowedScopes.Add(new ClientScope()
+                    {
+                        Client = client,
+                        Scope = scope
+                    });
+                }
+                #endregion
+
+                configDb.SaveChanges();
+            });
+            #endregion
+
+            return new ApiResult<bool>(true);
+        }
+        #endregion
+
+        #region API - 权限代码
+        /// <summary>
+        /// API - 权限代码
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.scopes</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.scopes</code>
-        /// </remarks>
         [HttpGet("Scopes")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceDelete)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceDelete)]
-        [SwaggerOperation("ApiResource/Scopes")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.scopes")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.scopes")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceScopes", 
+            Summary = "API - 权限代码",
+            Description = "scope&permission：isms.apiresource.scopes")]
         public async Task<ApiResult<Dictionary<string, List<ApiResourceScopeResponse>>>> Scopes()
         {
             var entities = new List<ApiResourceScopeEntity>();
@@ -628,15 +768,17 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 错误码表
+        #region API - 错误码表
         /// <summary>
-        /// 微服务 - 错误码表
+        /// API - 错误码表
         /// </summary>
-        /// <remarks>微服务代码对照表</remarks>
         [HttpGet("Codes")]
         [AllowAnonymous]
-        [SwaggerOperation("ApiResource/Codes")]
-        public List<ErrorCodeModel> Codes()
+        [SwaggerOperation(
+            OperationId = "ApiResourceCodes", 
+            Summary = "API - 错误码表",
+            Description = "API代码对照表")]
+        public List<ApiCodeModel> Codes()
         {
             var result = _Codes<ApiResourceControllerEnums>();
 
@@ -645,22 +787,21 @@ namespace IdentityServer4.MicroService.Apis
         #endregion
         #endregion
 
-        #region 微服务 - 网关
-        #region 微服务 - 网关 - 发布或更新版本
+        #region API - 网关
+        #region API - 网关 - 发布或更新版本
         /// <summary>
-        /// 微服务 - 网关 - 发布或更新版本
+        /// API - 网关 - 发布或更新版本
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.publish</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.publish</code>
-        /// </remarks>
         [HttpPut("{id}/Publish")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePublish)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePublish)]
-        [SwaggerOperation("ApiResource/Publish")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.publish")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.publish")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePublish",
+            Summary = "API - 网关 - 发布或更新版本",
+            Description = "scope&permission：isms.apiresource.publish")]
         public async Task<ApiResult<bool>> Publish(long id, [FromBody]ApiResourcePublishRequest value)
         {
             if (!ModelState.IsValid)
@@ -684,7 +825,7 @@ namespace IdentityServer4.MicroService.Apis
                 value.scope,
                 value.openid);
 
-            // 更新微服务策略
+            // 更新API策略
             if (result.IsSuccessStatusCode)
             {
                 #region CacheConfigurations
@@ -692,7 +833,9 @@ namespace IdentityServer4.MicroService.Apis
                 {
                     var publishKey = $"ApiResource:Publish:{id}";
 
-                    var cacheResult = await redis.SetAsync(publishKey, JsonConvert.SerializeObject(value), null);
+                    await cache.SetStringAsync(publishKey, JsonConvert.SerializeObject(value), cacheOptions);
+
+                    //redis.SetAsync(publishKey, JsonConvert.SerializeObject(value), null);
                 }
 
                 catch (Exception ex)
@@ -754,21 +897,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 创建修订版
+        #region API - 网关 - 创建修订版
         /// <summary>
-        /// 微服务 - 网关 - 创建修订版
+        /// API - 网关 - 创建修订版
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.publishrevision</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.publishrevision</code>
-        /// </remarks>
         [HttpPost("{id}/PublishRevision")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePublishRevision)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePublishRevision)]
-        [SwaggerOperation("ApiResource/PublishRevision")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.publishrevision")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.publishrevision")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePublishRevision", 
+            Summary = "API - 网关 - 创建修订版",
+            Description = "scope&permission：isms.apiresource.publishrevision")]
         public async Task<ApiResult<bool>> PublishRevision(long id,
             [FromBody]ApiResourcePublishRevisionsRequest value)
         {
@@ -810,21 +952,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 创建新版本
+        #region API - 网关 - 创建新版本
         /// <summary>
-        /// 微服务 - 网关 - 创建新版本
+        /// API - 网关 - 创建新版本
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.publishversion</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.publishversion</code>
-        /// </remarks>
         [HttpPost("{id}/PublishVersion")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePublishVersion)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePublishVersion)]
-        [SwaggerOperation("ApiResource/PublishVersion")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.publishversion")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.publishversion")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePublishVersion", 
+            Summary = "API - 网关 - 创建新版本",
+            Description = "scope&permission：isms.apiresource.publishversion")]
         public async Task<ApiResult<bool>> PublishVersion(long id, [FromBody]ApiResourceCreateVersionRequest value)
         {
             if (!ModelState.IsValid)
@@ -853,20 +994,19 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 上次发布配置
+        #region API - 网关 - 上次发布配置
         /// <summary>
-        /// 微服务 - 网关 - 上次发布配置
+        /// API - 网关 - 上次发布配置
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.publishconfiguration</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.publishconfiguration</code>
-        /// </remarks>
         [HttpGet("{id}/PublishConfiguration")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePublishConfiguration)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePublishConfiguration)]
-        [SwaggerOperation("ApiResource/PublishConfiguration")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.publishconfiguration")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.publishconfiguration")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePublishConfiguration", 
+            Summary = "API - 网关 - 上次发布配置",
+            Description = "scope&permission：isms.apiresource.publishconfiguration")]
         public async Task<ApiResult<ApiResourcePublishRequest>> PublishConfiguration(long id)
         {
             if (!await exists(id))
@@ -892,7 +1032,7 @@ namespace IdentityServer4.MicroService.Apis
 
             var publishKey = $"ApiResource:Publish:{id}";
 
-            var resultCache = await redis.GetAsync(publishKey);
+            var resultCache = await cache.GetStringAsync(publishKey); //redis.GetAsync(publishKey);
 
             if (!string.IsNullOrWhiteSpace(resultCache))
             {
@@ -903,20 +1043,19 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 版本列表
+        #region API - 网关 - 版本列表
         /// <summary>
-        /// 微服务 - 网关 - 版本列表
+        /// API - 网关 - 版本列表
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.versions</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.versions</code>
-        /// </remarks>
         [HttpGet("{id}/Versions")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceVersions)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceVersions)]
-        [SwaggerOperation("ApiResource/Versions")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.versions")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.versions")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceVersions", 
+            Summary = "API - 网关 - 版本列表",
+            Description = "scope&permission：isms.apiresource.versions")]
         [ResponseCache(Duration = 60)]
         public async Task<PagingResult<ApiResourceVersionsResponse>> Versions(long id)
         {
@@ -958,21 +1097,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 上线指定版本
+        #region API - 网关 - 上线指定版本
         /// <summary>
-        /// 微服务 - 网关 - 上线指定版本
+        /// API - 网关 - 上线指定版本
         /// </summary>
         /// <param name="id"></param>
         /// <param name="revisionId"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.setonlineversion</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.setonlineversion</code>
-        /// </remarks>
         [HttpPost("{id}/Versions/{revisionId}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceSetOnlineVersion)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceSetOnlineVersion)]
-        [SwaggerOperation("ApiResource/SetOnlineVersion")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.setonlineversion")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.setonlineversion")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceSetOnlineVersion",
+            Summary = "API - 网关 - 上线指定版本",
+            Description = "scope&permission：isms.apiresource.setonlineversion")]
         public async Task<ApiResult<bool>> SetOnlineVersion(long id, string revisionId)
         {
             if (!await exists(id) || string.IsNullOrWhiteSpace(revisionId))
@@ -993,19 +1131,18 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - OAuthServers
+        #region API - 网关 - OAuthServers
         /// <summary>
-        /// 微服务 - 网关 - OAuthServers
+        /// API - 网关 - OAuthServers
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.authservers</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.authservers</code>
-        /// </remarks>
         [HttpGet("AuthServers")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceAuthServers)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceAuthServers)]
-        [SwaggerOperation("ApiResource/AuthServers")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.authservers")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.authservers")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceAuthServers", 
+            Summary = "API - 网关 - OAuthServers",
+            Description = "scope&permission：isms.apiresource.authservers")]
         public async Task<ApiResult<AzureApiManagementEntities<AzureApiManagementAuthorizationServerEntity>>> AuthServers()
         {
             var result = await AzureApim.AuthorizationServers.GetAsync();
@@ -1014,19 +1151,18 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 网关 - 产品包列表
+        #region API - 网关 - 产品包列表
         /// <summary>
-        /// 微服务 - 网关 - 产品包列表
+        /// API - 网关 - 产品包列表
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.products</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.products</code>
-        /// </remarks>
         [HttpGet("Products")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceProducts)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceProducts)]
-        [SwaggerOperation("ApiResource/Products")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.products")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.products")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceProducts", 
+            Summary = "API - 网关 - 产品包列表",
+            Description = "scope&permission：isms.apiresource.products")]
         public async Task<ApiResult<AzureApiManagementEntities<AzureApiManagementProductEntity>>> Products()
         {
             var result = await AzureApim.Products.GetAsync();
@@ -1036,22 +1172,21 @@ namespace IdentityServer4.MicroService.Apis
         #endregion
         #endregion
 
-        #region 微服务 - 修订内容
-        #region 微服务 - 修订内容 - 列表
+        #region API - 修订内容
+        #region API - 修订内容 - 列表
         /// <summary>
-        /// 微服务 - 修订内容 - 列表
+        /// API - 修订内容 - 列表
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="apiId">Api的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.releases</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.releases</code>
-        /// </remarks>
         [HttpGet("{id}/Releases")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceReleases)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceReleases)]
-        [SwaggerOperation("ApiResource/Releases")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.releases")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.releases")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceReleases", 
+            Summary = "API - 修订内容 - 列表",
+            Description = "scope&permission：isms.apiresource.releases")]
         public async Task<PagingResult<AzureApiManagementReleaseEntity>> Releases(long id, string apiId)
         {
             if (string.IsNullOrWhiteSpace(apiId))
@@ -1077,21 +1212,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 修订内容 - 发布
+        #region API - 修订内容 - 发布
         /// <summary>
-        /// 微服务 - 修订内容 - 发布
+        /// API - 修订内容 - 发布
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.postrelease</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.postrelease</code>
-        /// </remarks>
         [HttpPost("{id}/Releases")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePostRelease)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePostRelease)]
-        [SwaggerOperation("ApiResource/PostRelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.postrelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.postrelease")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePostRelease", 
+            Summary = "API - 修订内容 - 发布",
+            Description = "scope&permission：isms.apiresource.postrelease")]
         public async Task<ApiResult<bool>> PostRelease(long id, [FromBody]ApiResourcePostReleaseRequest value)
         {
             if (!ModelState.IsValid)
@@ -1106,22 +1240,21 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 修订内容 - 更新
+        #region API - 修订内容 - 更新
         /// <summary>
-        /// 微服务 - 修订内容 - 更新
+        /// API - 修订内容 - 更新
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="releaseId">修订内容的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.putrelease</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.putrelease</code>
-        /// </remarks>
         [HttpPut("{id}/Releases/{releaseId}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePutRelease)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePutRelease)]
-        [SwaggerOperation("ApiResource/PutRelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.putrelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.putrelease")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePutRelease", 
+            Summary = " API - 修订内容 - 更新",
+            Description = "scope&permission：isms.apiresource.putrelease")]
         public async Task<ApiResult<bool>> PutRelease(long id, string releaseId, [FromBody]ApiResourcePutReleaseRequest value)
         {
             if (!ModelState.IsValid)
@@ -1142,21 +1275,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 修订内容 - 删除
+        #region API - 修订内容 - 删除
         /// <summary>
-        /// 微服务 - 修订内容 - 删除
+        /// API - 修订内容 - 删除
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="releaseId">修订内容的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.deleterelease</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.deleterelease</code>
-        /// </remarks>
         [HttpDelete("{id}/Releases/{releaseId}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceDeleteRelease)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceDeleteRelease)]
-        [SwaggerOperation("ApiResource/DeleteRelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.deleterelease")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.deleterelease")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceDeleteRelease", 
+            Summary = "API - 修订内容 - 删除",
+            Description = "scope&permission：isms.apiresource.deleterelease")]
         public async Task<ApiResult<bool>> DeleteRelease(long id, string releaseId)
         {
             if (string.IsNullOrWhiteSpace(releaseId))
@@ -1172,21 +1304,20 @@ namespace IdentityServer4.MicroService.Apis
         #endregion
         #endregion
 
-        #region 微服务 - 订阅者
-        #region 微服务 - 订阅者 - 列表
+        #region API - 订阅者
+        #region API - 订阅者 - 列表
         /// <summary>
-        /// 微服务 - 订阅者 - 列表
+        /// API - 订阅者 - 列表
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.subscriptions</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.subscriptions</code>
-        /// </remarks>
         [HttpGet("{id}/Subscriptions")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceSubscriptions)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceSubscriptions)]
-        [SwaggerOperation("ApiResource/Subscriptions")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.subscriptions")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.subscriptions")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceSubscriptions", 
+            Summary = "API - 订阅者 - 列表",
+            Description = "scope&permission：isms.apiresource.subscriptions")]
         public async Task<PagingResult<ApiResourceSubscriptionEntity>> Subscriptions(long id)
         {
             if (!await exists(id))
@@ -1211,16 +1342,19 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 订阅者 - 添加
+        #region API - 订阅者 - 添加
         /// <summary>
-        /// 微服务 - 订阅者 - 添加
+        /// API - 订阅者 - 添加
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="code">邮箱校验加密字符串</param>
         /// <returns></returns>
         [HttpGet("{id}/AddSubscription")]
         [AllowAnonymous]
-        [SwaggerOperation("ApiResource/AddSubscription")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceAddSubscription", 
+            Summary = "API - 订阅者 - 添加",
+            Description ="")]
         public async Task<ApiResult<bool>> AddSubscription(long id,
             [FromQuery]string code)
         {
@@ -1264,16 +1398,16 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 订阅者 - 取消
+        #region API - 订阅者 - 取消
         /// <summary>
-        /// 微服务 - 订阅者 - 取消
+        /// API - 订阅者 - 取消
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="code">邮箱校验加密字符串</param>
         /// <returns></returns>
         [HttpGet("{id}/DelSubscription")]
         [AllowAnonymous]
-        [SwaggerOperation("ApiResource/DelSubscription")]
+        [SwaggerOperation(OperationId = "ApiResourceDelSubscription", Summary = "API - 订阅者 - 取消",Description ="")]
         public async Task<ApiResult<bool>> DelSubscription(long id,
             [FromQuery]string code)
         {
@@ -1331,21 +1465,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 订阅者 - 验证邮箱
+        #region API - 订阅者 - 验证邮箱
         /// <summary>
-        /// 微服务 - 订阅者 - 验证邮箱
+        /// API - 订阅者 - 验证邮箱
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.verifyemail</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.verifyemail</code>
-        /// </remarks>
         [HttpPost("{id}/Subscriptions/VerifyEmail")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceVerifyEmail)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceVerifyEmail)]
-        [SwaggerOperation("ApiResource/VerifyEmail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.verifyemail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.verifyemail")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceVerifyEmail", 
+            Summary = "API - 订阅者 - 验证邮箱",
+            Description = "scope&permission：isms.apiresource.verifyemail")]
         public async Task<ApiResult<bool>> VerifyEmail(long id, [FromBody]ApiResourceSubscriptionsVerifyEmailRequest value)
         {
             if (!ModelState.IsValid)
@@ -1354,7 +1487,7 @@ namespace IdentityServer4.MicroService.Apis
                     ModelErrors());
             }
 
-            #region 微服务是否存在
+            #region API是否存在
             var apiEntity = configDb.ApiResources.FirstOrDefault(x => x.Id == id);
             if (apiEntity == null)
             {
@@ -1423,8 +1556,8 @@ namespace IdentityServer4.MicroService.Apis
                 }
                 #endregion
 
-                var result = await email.SendEmailAsync(
-                    SendCloudMailTemplates.verify_apiresource_subscription,
+                var result = await email.SendEmailAsync("verify_apiresource_subscription", "验证邮箱",
+                   //SendCloudMailTemplates.verify_apiresource_subscription,
                    new string[] { value.email },
                     new Dictionary<string, string[]>()
                     {
@@ -1453,21 +1586,20 @@ namespace IdentityServer4.MicroService.Apis
         #endregion
         #endregion
 
-        #region 微服务 - 包市场
-        #region 微服务 - 包市场 - 列表
+        #region API - 包市场
+        #region API - 包市场 - 列表
         /// <summary>
-        /// 微服务 - 包市场 - 列表
+        /// API - 包市场 - 列表
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.packages</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.packages</code>
-        /// </remarks>
         [HttpGet("{id}/Packages")]
-        [SwaggerOperation("ApiResource/Packages")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePackages)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePackages)]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePackages", 
+            Summary = "API - 包市场 - 列表",
+            Description = "scope&permission：isms.apiresource.packages")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.packages")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.packages")]
         public async Task<PagingResult<ApiResourceSDKEntity>> Packages(string id)
         {
             var tb = await storageService.CreateTableAsync("ApiResourcePackages");
@@ -1487,21 +1619,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 包市场 - 添加
+        #region API - 包市场 - 添加
         /// <summary>
-        /// 微服务 - 包市场 - 添加
+        /// API - 包市场 - 添加
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.postpackages</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.postpackages</code>
-        /// </remarks>
         [HttpPost("{id}/Packages")]
-        [SwaggerOperation("ApiResource/PostPackage")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePostPackage)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePostPackage)]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePostPackage", 
+            Summary = "API - 包市场 - 添加",
+            Description = "scope&permission：isms.apiresource.postpackages")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.postpackages")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.postpackages")]
         public async Task<ApiResult<bool>> PostPackage(string id, [FromBody]ApiResourceSDKRequest value)
         {
             if (!ModelState.IsValid)
@@ -1545,21 +1676,20 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
-        #region 微服务 - 包市场 - 删除
+        #region API - 包市场 - 删除
         /// <summary>
-        /// 微服务 - 包市场 - 删除
+        /// API - 包市场 - 删除
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="packageId">包的ID</param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.deletepackage</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.deletepackage</code>
-        /// </remarks>
         [HttpDelete("{id}/Packages/{packageId}")]
-        [SwaggerOperation("ApiResource/DeletePackage")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourceDeletePackage)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourceDeletePackage)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.deletepackage")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.deletepackage")]
+        [SwaggerOperation(
+            OperationId = "ApiResourceDeletePackage", 
+            Summary = "API - 包市场 - 删除",
+            Description = "scope&permission：isms.apiresource.deletepackage")]
         public async Task<ApiResult<bool>> DeletePackage(string id, string packageId)
         {
             if (string.IsNullOrWhiteSpace(packageId))
@@ -1603,24 +1733,23 @@ namespace IdentityServer4.MicroService.Apis
                 return new ApiResult<bool>(l, ApiResourceControllerEnums.Packages_DelPackageFailed, ex.Message);
             }
         }
-        #endregion 
+        #endregion
 
-        #region 微服务 - 包市场 - 更新
+        #region API - 包市场 - 更新
         /// <summary>
-        /// 微服务 - 包市场 - 更新
+        /// API - 包市场 - 更新
         /// </summary>
-        /// <param name="id">微服务的ID</param>
+        /// <param name="id">API的ID</param>
         /// <param name="packageId">包的ID</param>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.apiresource.deletepackage</code>
-        /// <label>User Permissions：</label><code>ids4.ms.apiresource.deletepackage</code>
-        /// </remarks>
         [HttpPut("{id}/Packages/{packageId}")]
-        [SwaggerOperation("ApiResource/PutPackage")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.ApiResourcePutPackage)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.ApiResourcePutPackage)]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:apiresource.putpackage")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:apiresource.putpackage")]
+        [SwaggerOperation(
+            OperationId = "ApiResourcePutPackage", 
+            Summary = "API - 包市场 - 更新",
+            Description = "scope&permission：isms.apiresource.deletepackage")]
         public async Task<ApiResult<bool>> PutPackage(string id, string packageId, [FromBody]ApiResourceSDKRequest value)
         {
             if (string.IsNullOrWhiteSpace(packageId))
@@ -1673,7 +1802,7 @@ namespace IdentityServer4.MicroService.Apis
                 return new ApiResult<bool>(l, ApiResourceControllerEnums.Packages_PutPackageFailed, ex.Message);
             }
         }
-        #endregion 
+        #endregion
         #endregion
 
         #region 辅助方法
@@ -1690,7 +1819,7 @@ namespace IdentityServer4.MicroService.Apis
             }
 
             return false;
-        } 
+        }
         #endregion
     }
 }

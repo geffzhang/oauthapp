@@ -8,29 +8,26 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using Microsoft.AspNetCore.Authorization;
-using Swashbuckle.AspNetCore.SwaggerGen;
+using Swashbuckle.AspNetCore.Annotations;
 using IdentityServer4.MicroService.Data;
 using IdentityServer4.MicroService.Enums;
 using IdentityServer4.MicroService.Models.Apis.Common;
 using static IdentityServer4.MicroService.AppConstant;
-using static IdentityServer4.MicroService.MicroserviceConfig;
 
 namespace IdentityServer4.MicroService.Apis
 {
     /// <summary>
     /// 角色
     /// </summary>
-    [Route("Role")]
     [Produces("application/json")]
-    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = Roles.Users)]
-    public class RoleController : BasicController
+    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = DefaultRoles.User)]
+    [ApiExplorerSettingsDynamic("Role")]
+    [SwaggerTag("角色")]
+    public class RoleController : ApiControllerBase
     {
-        #region Services
-        #endregion
-
         #region 构造函数
         public RoleController(
-           IdentityDbContext _db,
+           UserDbContext _db,
            IStringLocalizer<RoleController> localizer)
         {
             db = _db;
@@ -43,14 +40,12 @@ namespace IdentityServer4.MicroService.Apis
         /// 角色 - 列表
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.role.get</code>
-        /// <label>User Permissions：</label><code>ids4.ms.role.get</code>
-        /// </remarks>
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.RoleGet)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.RoleGet)]
-        [SwaggerOperation("Role/Get")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:role.get")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:role.get")]
+        [SwaggerOperation(OperationId = "RoleGet",
+            Summary = "角色 - 列表",
+            Description = "scope&permission：isms.role.get")]
         public async Task<PagingResult<AppRole>> Get()
         {
             var data = await db.Roles
@@ -69,14 +64,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.role.detail</code>
-        /// <label>User Permissions：</label><code>ids4.ms.role.detail</code>
-        /// </remarks>
         [HttpGet("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.RoleDetail)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.RoleDetail)]
-        [SwaggerOperation("Role/Detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:role.detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:role.detail")]
+        [SwaggerOperation(OperationId = "RoleDetail",
+            Summary = "角色 - 详情",
+            Description = "scope&permission：isms.role.detail")]
         public async Task<ApiResult<AppRole>> Get(int id)
         {
             var entity = await db.Roles
@@ -98,14 +91,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.role.post</code>
-        /// <label>User Permissions：</label><code>ids4.ms.role.post</code>
-        /// </remarks>
         [HttpPost]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.RolePost)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.RolePost)]
-        [SwaggerOperation("Role/Post")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:role.post")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:role.post")]
+        [SwaggerOperation(OperationId = "RolePost",
+            Summary = "角色 - 创建",
+            Description = "scope&permission：isms.role.post")]
         public async Task<ApiResult<long>> Post([FromBody]AppRole value)
         {
             if (!ModelState.IsValid)
@@ -128,14 +119,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.role.put</code>
-        /// <label>User Permissions：</label><code>ids4.ms.role.put</code>
-        /// </remarks>
         [HttpPut]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.RolePut)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.RolePut)]
-        [SwaggerOperation("Role/Put")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:role.put")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:role.put")]
+        [SwaggerOperation(OperationId = "RolePut",
+            Summary = "角色 - 更新",
+            Description = "scope&permission：isms.role.put")]
         public async Task<ApiResult<long>> Put([FromBody]AppRole value)
         {
             if (!ModelState.IsValid)
@@ -176,7 +165,7 @@ namespace IdentityServer4.MicroService.Apis
                                 //var sql = string.Format("DELETE AspNetRoleClaims WHERE ID IN ({0})",
                                 //            string.Join(",", DeleteEntities));
 
-                                db.Database.ExecuteSqlCommand($"DELETE AspNetRoleClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
+                                db.Database.ExecuteSqlRaw($"DELETE AspNetRoleClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
                             }
                         }
                         #endregion
@@ -198,7 +187,7 @@ namespace IdentityServer4.MicroService.Apis
                                 //if (!string.IsNullOrWhiteSpace(x.ClaimType)) { _params[0].Value = x.ClaimType; }
                                 //if (!string.IsNullOrWhiteSpace(x.ClaimValue)) { _params[1].Value = x.ClaimValue; }
 
-                                db.Database.ExecuteSqlCommand($"UPDATE AspNetRoleClaims SET [ClaimType]={x.ClaimType},[ClaimValue]={x.ClaimValue} WHERE Id = {x.Id}");
+                                db.Database.ExecuteSqlRaw($"UPDATE AspNetRoleClaims SET [ClaimType]={x.ClaimType},[ClaimValue]={x.ClaimValue} WHERE Id = {x.Id}");
                             });
                         }
                         #endregion
@@ -209,8 +198,6 @@ namespace IdentityServer4.MicroService.Apis
                         {
                             NewEntities.ForEach(x =>
                             {
-                                var sql = new RawSqlString("INSERT INTO AspNetRoleClaims VALUES (@ClaimType,@ClaimValue,@RoleId)");
-
                                 var _params = new SqlParameter[]
                                 {
                                     new SqlParameter("@RoleId", source.Id),
@@ -222,7 +209,7 @@ namespace IdentityServer4.MicroService.Apis
 
                                 if (!string.IsNullOrWhiteSpace(x.ClaimValue)) { _params[2].Value = x.ClaimValue; }
 
-                                db.Database.ExecuteSqlCommand(sql, _params);
+                                db.Database.ExecuteSqlRaw("INSERT INTO AspNetRoleClaims VALUES (@ClaimType,@ClaimValue,@RoleId)", _params);
                             });
                         }
                         #endregion
@@ -252,14 +239,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.role.delete</code>
-        /// <label>User Permissions：</label><code>ids4.ms.role.delete</code>
-        /// </remarks>
         [HttpDelete("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.RoleDelete)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.RoleDelete)]
-        [SwaggerOperation("Role/Delete")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:role.delete")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:role.delete")]
+        [SwaggerOperation(OperationId = "RoleDelete",
+            Summary = "角色 - 删除",
+            Description = "scope&permission：isms.role.delete")]
         public async Task<ApiResult<long>> Delete(int id)
         {
             var entity = await db.Roles.FirstOrDefaultAsync(x => x.Id == id);
@@ -282,13 +267,12 @@ namespace IdentityServer4.MicroService.Apis
         /// 角色 - 错误码表
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// 角色代码对照表
-        /// </remarks>
         [HttpGet("Codes")]
         [AllowAnonymous]
-        [SwaggerOperation("Role/Codes")]
-        public List<ErrorCodeModel> Codes()
+        [SwaggerOperation(OperationId = "RoleCodes",
+            Summary = "角色 - 错误码表",
+            Description = "角色码对照表")]
+        public List<ApiCodeModel> Codes()
         {
             var result = _Codes<RoleControllerEnums>();
 

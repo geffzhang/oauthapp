@@ -1,30 +1,27 @@
-﻿using System;
-using System.Reflection;
-using System.Linq;
-using System.Data;
-using System.Data.SqlClient;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.Extensions.Localization;
-using Swashbuckle.AspNetCore.SwaggerGen;
-using Newtonsoft.Json;
-using IdentityServer4.EntityFramework.DbContexts;
+﻿using IdentityServer4.EntityFramework.DbContexts;
+using IdentityServer4.MicroService.CacheKeys;
 using IdentityServer4.MicroService.Data;
 using IdentityServer4.MicroService.Enums;
-using IdentityServer4.MicroService.Tenant;
-using IdentityServer4.MicroService.Services;
-using IdentityServer4.MicroService.CacheKeys;
-using IdentityServer4.MicroService.Attributes;
 using IdentityServer4.MicroService.Models.Apis.Common;
 using IdentityServer4.MicroService.Models.Apis.UserController;
+using IdentityServer4.MicroService.Services;
+using IdentityServer4.MicroService.Tenant;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using Newtonsoft.Json;
+using Swashbuckle.AspNetCore.Annotations;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Data;
+using System.Linq;
+using System.Threading.Tasks;
 using static IdentityServer4.MicroService.AppConstant;
-using static IdentityServer4.MicroService.MicroserviceConfig;
-using static IdentityServer4.MicroService.AppDefaultData;
 
 namespace IdentityServer4.MicroService.Apis
 {
@@ -33,10 +30,11 @@ namespace IdentityServer4.MicroService.Apis
     /// <summary>
     /// 用户
     /// </summary>
-    [Route("User")]
     [Produces("application/json")]
-    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = Roles.Users)]
-    public class UserController : BasicController
+    [Authorize(AuthenticationSchemes = AppAuthenScheme, Roles = DefaultRoles.User)]
+    [ApiExplorerSettingsDynamic("User")]
+    [SwaggerTag("用户")]
+    public class UserController : ApiControllerBase
     {
         #region Services
         // 短信
@@ -49,11 +47,13 @@ namespace IdentityServer4.MicroService.Apis
         readonly TenantDbContext tenantDbContext;
 
         readonly ConfigurationDbContext configDbContext;
+
+        readonly IdentityServer4MicroServiceOptions ismsOptions;
         #endregion
 
         #region 构造函数
         public UserController(
-            IdentityDbContext _db,
+            UserDbContext _db,
             RedisService _redis,
             IStringLocalizer<UserController> _localizer,
             ISmsSender _sms,
@@ -62,7 +62,8 @@ namespace IdentityServer4.MicroService.Apis
             TenantDbContext _tenantDbContext,
             ConfigurationDbContext _configDbContext,
             IDataProtectionProvider _provider,
-            TenantService _tenantService)
+            TenantService _tenantService,
+            IdentityServer4MicroServiceOptions _ismsOptions)
         {
             // 多语言
             l = _localizer;
@@ -75,6 +76,7 @@ namespace IdentityServer4.MicroService.Apis
             configDbContext = _configDbContext;
             protector = _provider.CreateProtector(GetType().FullName).ToTimeLimitedDataProtector();
             tenantService = _tenantService;
+            ismsOptions = _ismsOptions;
         }
         #endregion
 
@@ -85,15 +87,13 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.get</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.get</code>
-        /// </remarks>
         [HttpGet]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserGet)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserGet)]
-        [SwaggerOperation("User/Get")]
-        public async Task<PagingResult<View_User>> Get(PagingRequest<UserGetRequest> value)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.get")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.get")]
+        [SwaggerOperation(OperationId = "UserGet",
+            Summary = "用户 - 列表",
+            Description = "scope&permission：isms.user.get")]
+        public async Task<PagingResult<View_User>> Get([FromQuery]PagingRequest<UserGetRequest> value)
         {
             if (!ModelState.IsValid)
             {
@@ -114,11 +114,14 @@ namespace IdentityServer4.MicroService.Apis
             {
                 where = (where, sqlParams) =>
                 {
-                    where.Add(" ( Tenants LIKE '%\"TenantId\":" + TenantId + "%') ");
+                    where.Add(" Tenants LIKE @TenantId");
+                    sqlParams.Add(new SqlParameter("@TenantId", $"%TenantId\":{TenantId}%"));
 
-                    if (!User.IsInRole(Roles.Administrators))
+                    if (!User.IsInRole(DefaultRoles.Administrator) && !string.IsNullOrWhiteSpace(UserLineage))
                     {
-                        where.Add("Lineage.IsDescendantOf(hierarchyid::Parse ('" + UserLineage + "')) = 1");
+                        //where.Add("Lineage.IsDescendantOf(hierarchyid::Parse ('" + UserLineage + "')) = 1");
+                        where.Add("Lineage LIKE @Lineage");
+                        sqlParams.Add(new SqlParameter("@Lineage", "%" + UserLineage));
                     }
 
                     if (!string.IsNullOrWhiteSpace(value.q.email))
@@ -139,14 +142,29 @@ namespace IdentityServer4.MicroService.Apis
                         sqlParams.Add(new SqlParameter("@PhoneNumber", value.q.phoneNumber));
                     }
 
-                    if (!string.IsNullOrWhiteSpace(value.q.roles))
+                    if (!string.IsNullOrWhiteSpace(value.q.role))
                     {
-                        var roleIds = value.q.roles.Split(new string[] { "," },
-                            StringSplitOptions.RemoveEmptyEntries).ToList();
+                        where.Add("Roles LIKE @Role");
+                        sqlParams.Add(new SqlParameter("@Role", $"%Name\":\"{value.q.role}%"));
+                    }
 
-                        var rolesExpression = roleIds.Select(r => "Roles Like '%\"Id\":" + r + ",%'");
+                    if (!string.IsNullOrWhiteSpace(value.q.providerName))
+                    {
+                        where.Add("Logins LIKE @LoginProvider");
+                        sqlParams.Add(new SqlParameter("@LoginProvider", $"%LoginProvider\":\"{value.q.providerName}%"));
+                    }
 
-                        where.Add(" ( " + string.Join(" AND ", rolesExpression) + " ) ");
+                    if (!string.IsNullOrWhiteSpace(value.q.providerKey))
+                    {
+                        where.Add("Logins LIKE @ProviderKey");
+                        sqlParams.Add(new SqlParameter("@ProviderKey", $"%ProviderKey\":\"{value.q.providerKey}%"));
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(value.q.claimType)&& !string.IsNullOrWhiteSpace(value.q.claimValue))
+                    {
+                        where.Add("Claims LIKE @ClaimType AND Claims LIKE @ClaimValue");
+                        sqlParams.Add(new SqlParameter("@ClaimType", $"%ClaimType\":\"{value.q.claimType}%"));
+                        sqlParams.Add(new SqlParameter("@ClaimValue", $"%ClaimValue\":\"{value.q.claimValue}%"));
                     }
                 }
             };
@@ -170,6 +188,9 @@ namespace IdentityServer4.MicroService.Apis
                      case "Tenants":
                          return JsonConvert.DeserializeObject<List<View_User_Tenant>>(val.ToString());
 
+                     case "Logins":
+                         return JsonConvert.DeserializeObject<List<View_User_Login>>(val.ToString());
+
                      default:
                          return val;
                  }
@@ -179,20 +200,57 @@ namespace IdentityServer4.MicroService.Apis
         }
         #endregion
 
+        #region 用户 - 团队
+        /// <summary>
+        /// 获取团队列表
+        /// </summary>
+        /// <param name="path"></param>
+        /// <returns></returns>
+        [HttpGet("Distributors")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.distributors")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.distributors")]
+        [SwaggerOperation(OperationId = "UserDistributors",
+            Summary = "用户 - 团队",
+            Description = "scope&permission：isms.user.distributors")]
+        public ApiResult<List<DistributorResponse>> Distributors([FromQuery][Required]string path)
+        {
+            var cmd = @"SELECT
+                        A.ID,
+                        A.UserName,
+                        A.NickName,
+                        A.Avatar, 
+                        B.Members,
+                        B.Sales,
+                        A.ParentUserID,
+                        A.Lineage.GetLevel() AS LineageLevel,
+                        A.Lineage.ToString() AS Lineage
+                        FROM AspNetUsers A
+                        JOIN AspNetUserDistributors B ON A.ID = B.UserID
+                        WHERE A.Lineage.IsDescendantOf(hierarchyid::Parse (@path)) = 1";
+
+            if (!User.IsInRole(DefaultRoles.Administrator) && !string.IsNullOrWhiteSpace(UserLineage))
+            {
+                cmd += @" AND A.Lineage.IsDescendantOf(hierarchyid::Parse ('" + UserLineage + "')) = 1";
+            }
+
+            var result = db.DistributorResponse.FromSqlRaw(cmd, new SqlParameter("@path", path)).ToList();
+
+            return new ApiResult<List<DistributorResponse>>(result);
+        }
+        #endregion
+
         #region 用户 - 详情
         /// <summary>
         ///用户 - 详情
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.detail</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.detail</code>
-        /// </remarks>
         [HttpGet("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserDetail)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserDetail)]
-        [SwaggerOperation("User/Detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.detail")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.detail")]
+        [SwaggerOperation(OperationId = "UserDetail",
+            Summary = "用户 - 详情",
+            Description = "scope&permission：isms.user.detail")]
         public async Task<ApiResult<AppUser>> Get(int id)
         {
             var query = db.Users.AsQueryable();
@@ -221,14 +279,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.post</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.post</code>
-        /// </remarks>
         [HttpPost]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserPost)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserPost)]
-        [SwaggerOperation("User/Post")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.post")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.post")]
+        [SwaggerOperation(OperationId = "UserPost",
+            Summary = "用户 - 创建",
+            Description = "scope&permission：isms.user.post")]
         public async Task<ApiResult<long>> Post([FromBody]AppUser value)
         {
             if (!ModelState.IsValid)
@@ -237,11 +293,8 @@ namespace IdentityServer4.MicroService.Apis
                     ModelErrors());
             }
 
-            var roleIds = db.Roles.Where(x => x.Name.Equals(Roles.Users) || x.Name.Equals(Roles.Developer))
+            var roleIds = db.Roles.Where(x => x.Name.Equals(DefaultRoles.User) || x.Name.Equals(DefaultRoles.Developer))
                   .Select(x => x.Id).ToList();
-
-            var permissions = typeof(UserPermissions).GetFields()
-                .Select(x => x.GetCustomAttribute<PolicyClaimValuesAttribute>().ClaimsValues[0]).ToList();
 
             var tenantIds = tenantDb.Tenants.Select(x => x.Id).ToList();
             try
@@ -252,7 +305,7 @@ namespace IdentityServer4.MicroService.Apis
                     db,
                     value,
                     roleIds,
-                    string.Join(",", permissions),
+                    $"{AppConstant.MicroServiceName}.all",
                     tenantIds);
 
                 db.Add(value);
@@ -284,15 +337,13 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.put</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.put</code>
-        /// </remarks>
         [HttpPut]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserPut)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserPut)]
-        [SwaggerOperation("User/Put")]
-        public async Task<ApiResult<long>> Put([FromBody]AppUser value)
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.put")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.put")]
+        [SwaggerOperation(OperationId = "UserPut",
+            Summary = "用户 - 更新",
+            Description = "scope&permission：isms.user.put")]
+        public ApiResult<long> Put([FromBody]AppUser value)
         {
             if (!ModelState.IsValid)
             {
@@ -301,187 +352,196 @@ namespace IdentityServer4.MicroService.Apis
                     ModelErrors());
             }
 
-            using (var tran = db.Database.BeginTransaction(IsolationLevel.ReadCommitted))
+            var Entity = db.Users.Where(x => x.Id == value.Id)
+               //.Include(x => x.Logins).Include(x => x.Tokens)
+               .Include(x => x.Claims)
+               .Include(x => x.Roles)
+               .Include(x => x.Files)
+               .Include(x => x.Properties)
+               .Include(x => x.Tenants)
+               .FirstOrDefault();
+
+            if (Entity == null)
             {
-                try
-                {
-                    #region Update Entity
-                    // 需要先更新value，否则更新如claims等属性会有并发问题
-                    db.Update(value);
-                    db.SaveChanges();
-                    #endregion
-
-                    #region Find Entity.Source
-                    var source = await db.Users.Where(x => x.Id == value.Id)
-                                     .Include(x => x.Logins)
-                                     .Include(x => x.Claims)
-                                     .Include(x => x.Roles)
-                                     .Include(x => x.Files)
-                                    .AsNoTracking()
-                                    .FirstOrDefaultAsync();
-                    #endregion
-
-                    #region Update Entity.Claims
-                    if (value.Claims != null && value.Claims.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.Claims.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.Claims.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE AspNetUserClaims WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                db.Database.ExecuteSqlCommand($"DELETE AspNetUserClaims WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.Claims.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand($"UPDATE AspNetUserClaims SET [ClaimType]={x.ClaimType},[ClaimValue]={x.ClaimValue} WHERE Id = {x.Id}");
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.Claims.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand($"INSERT INTO AspNetUserClaims VALUES ({x.ClaimType},{x.ClaimValue},{source.Id})");
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    #region Update Entity.Files
-                    if (value.Files != null && value.Files.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.Files.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.Files.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE AspNetUserFiles WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                db.Database.ExecuteSqlCommand($"DELETE AspNetUserFiles WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.Files.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand($"UPDATE AspNetUserFiles SET [FileType]={x.FileType},[Files]={x.Files} WHERE Id ={x.Id}");
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.Files.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand(
-                                  $"INSERT INTO AspNetUserFiles VALUES ({x.FileType},{x.Files},{source.Id})");
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    #region Update Entity.Roles
-                    if (value.Roles != null && value.Roles.Count > 0)
-                    {
-                        #region delete
-                        //var sql = $"DELETE AspNetUserRoles WHERE UserId = {source.Id}";
-                        db.Database.ExecuteSqlCommand($"DELETE AspNetUserRoles WHERE UserId = {source.Id}");
-                        #endregion
-
-                        #region insert
-                        value.Roles.ForEach(x =>
-                        {
-                            db.Database.ExecuteSqlCommand(
-                              $"INSERT INTO AspNetUserRoles VALUES ({source.Id},{x.RoleId})");
-                        });
-                        #endregion
-                    }
-                    #endregion
-
-                    #region Update Entity.Properties
-                    if (value.Properties != null && value.Properties.Count > 0)
-                    {
-                        #region delete
-                        var EntityIDs = value.Properties.Select(x => x.Id).ToList();
-                        if (EntityIDs.Count > 0)
-                        {
-                            var DeleteEntities = source.Properties.Where(x => !EntityIDs.Contains(x.Id)).Select(x => x.Id).ToArray();
-
-                            if (DeleteEntities.Count() > 0)
-                            {
-                                //var sql = string.Format("DELETE AspNetUserProperties WHERE ID IN ({0})",
-                                //            string.Join(",", DeleteEntities));
-
-                                db.Database.ExecuteSqlCommand($"DELETE AspNetUserProperties WHERE ID IN ({string.Join(",", DeleteEntities)})");
-                            }
-                        }
-                        #endregion
-
-                        #region update
-                        var UpdateEntities = value.Properties.Where(x => x.Id > 0).ToList();
-                        if (UpdateEntities.Count > 0)
-                        {
-                            UpdateEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand($"UPDATE AspNetUserProperties SET [Key]={x.Key},[Value]={x.Value} WHERE Id = {x.Id}");
-                            });
-                        }
-                        #endregion
-
-                        #region insert
-                        var NewEntities = value.Properties.Where(x => x.Id == 0).ToList();
-                        if (NewEntities.Count > 0)
-                        {
-                            NewEntities.ForEach(x =>
-                            {
-                                db.Database.ExecuteSqlCommand($"INSERT INTO AspNetUserProperties VALUES ({x.Key},{source.Id},{x.Value})");
-                            });
-                        }
-                        #endregion
-                    }
-                    #endregion
-
-                    tran.Commit();
-                }
-
-                catch (Exception ex)
-                {
-                    tran.Rollback();
-
-                    return new ApiResult<long>(l,
-                        BasicControllerEnums.ExpectationFailed,
-                        ex.Message);
-                }
+                return new ApiResult<long>(l, BasicControllerEnums.NotFound);
             }
 
+            #region Avatar
+            if (!string.IsNullOrWhiteSpace(value.Avatar) && !value.Avatar.Equals(Entity.Avatar))
+            {
+                Entity.Avatar = value.Avatar;
+            }
+            #endregion
+            #region NickName
+            if (!string.IsNullOrWhiteSpace(value.NickName) && !value.NickName.Equals(Entity.NickName))
+            {
+                Entity.NickName = value.NickName;
+            }
+            #endregion
+            #region Email
+            if (!string.IsNullOrWhiteSpace(value.Email) && !value.Email.Equals(Entity.Email))
+            {
+                Entity.Email = value.Email;
+            }
+            #endregion
+            #region PhoneNumber
+            if (!string.IsNullOrWhiteSpace(value.PhoneNumber) && !value.PhoneNumber.Equals(Entity.PhoneNumber))
+            {
+                Entity.PhoneNumber = value.PhoneNumber;
+            }
+            #endregion
+            #region LockFlag
+            if (value.LockFlag != Entity.LockFlag)
+            {
+                Entity.LockFlag = value.LockFlag;
+            }
+            #endregion
+            #region Status
+            if (value.Status != Entity.Status)
+            {
+                Entity.Status = value.Status;
+            }
+            #endregion
+            #region Money
+            if (value.Money != Entity.Money)
+            {
+                Entity.Money = value.Money;
+            }
+            #endregion
+            #region Points
+            if (value.Points != Entity.Points)
+            {
+                Entity.Points = value.Points;
+            }
+            #endregion
+            #region DataAmount
+            if (value.DataAmount != Entity.DataAmount)
+            {
+                Entity.DataAmount = value.DataAmount;
+            }
+            #endregion
+            #region Birthday
+            if (value.Birthday != Entity.Birthday)
+            {
+                Entity.Birthday = value.Birthday;
+            }
+            #endregion
+            #region Stature
+            if (value.Stature != Entity.Stature)
+            {
+                Entity.Stature = value.Stature;
+            }
+            #endregion
+            #region Weight
+            if (value.Weight != Entity.Weight)
+            {
+                Entity.Weight = value.Weight;
+            }
+            #endregion
+            #region LastUpdateTime
+            Entity.LastUpdateTime = DateTime.UtcNow.AddHours(8);
+            #endregion
+
+            #region Claims
+            if (value.Claims != null && value.Claims.Count > 0)
+            {
+                Entity.Claims.Clear();
+
+                value.Claims.ForEach(x =>
+                {
+                    if (!string.IsNullOrWhiteSpace(x.ClaimType))
+                    {
+                        Entity.Claims.Add(new AppUserClaim()
+                        {
+                            ClaimType = x.ClaimType,
+                            ClaimValue = x.ClaimValue,
+                            UserId = value.Id
+                        });
+                    }
+                });
+            }
+            #endregion
+            #region Roles
+            if (value.Roles != null && value.Roles.Count > 0)
+            {
+                Entity.Roles.Clear();
+
+                value.Roles.ForEach(x =>
+                {
+                    Entity.Roles.Add(new AppUserRole()
+                    {
+                        UserId = value.Id,
+                        RoleId = x.RoleId
+                    });
+                });
+            }
+            #endregion
+            #region Files
+            if (value.Files != null && value.Files.Count > 0)
+            {
+                Entity.Files.Clear();
+
+                value.Files.ForEach(x =>
+                {
+                    if (!string.IsNullOrWhiteSpace(x.Files))
+                    {
+                        Entity.Files.Add(new AspNetUserFile()
+                        {
+                            UserId = value.Id,
+                            Files = x.Files,
+                            FileType = x.FileType
+                        });
+                    }
+                });
+            }
+            #endregion
+            #region Properties
+            if (value.Properties != null && value.Properties.Count > 0)
+            {
+                Entity.Properties.Clear();
+
+                value.Properties.ForEach(x =>
+                {
+                    if (!string.IsNullOrWhiteSpace(x.Key))
+                    {
+                        Entity.Properties.Add(new AspNetUserProperty()
+                        {
+                            UserId = value.Id,
+                            Key = x.Key,
+                            Value = x.Value
+                        });
+                    }
+                });
+            }
+            #endregion
+            #region Tenants
+            if (value.Tenants != null && value.Tenants.Count > 0)
+            {
+                Entity.Tenants.Clear();
+
+                value.Tenants.ForEach(x =>
+                {
+                    Entity.Tenants.Add(new AspNetUserTenant()
+                    {
+                        UserId = value.Id,
+                        TenantId = x.TenantId
+                    });
+                });
+            }
+            #endregion
+
+            try
+            {
+                db.SaveChanges();
+            }
+
+            catch (Exception ex)
+            {
+                return new ApiResult<long>(l, BasicControllerEnums.ExpectationFailed, ex.Message)
+                {
+                    data = value.Id
+                };
+            }
             return new ApiResult<long>(value.Id);
         }
         #endregion
@@ -492,14 +552,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="id"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.delete</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.delete</code>
-        /// </remarks>
         [HttpDelete("{id}")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserDelete)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserDelete)]
-        [SwaggerOperation("User/Delete")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.delete")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.delete")]
+        [SwaggerOperation(OperationId = "UserDelete",
+            Summary = "用户 - 删除",
+            Description = "scope&permission：isms.user.delete")]
         public async Task<ApiResult<long>> Delete(int id)
         {
             var query = db.Users.AsQueryable();
@@ -529,14 +587,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.head</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.head</code>
-        /// </remarks>
         [HttpGet("Head")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserHead)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserHead)]
-        [SwaggerOperation("User/Head")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "scope:user.head")]
+        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = "permission:user.head")]
+        [SwaggerOperation(OperationId = "UserHead",
+            Summary = "用户 - 是否存在",
+            Description = "scope&permission：isms.user.head")]
         public async Task<ObjectResult> Head(UserDetailRequest value)
         {
             if (!ModelState.IsValid)
@@ -567,13 +623,12 @@ namespace IdentityServer4.MicroService.Apis
         /// 用户 - 错误码表
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// 用户代码对照表
-        /// </remarks>
         [HttpGet("Codes")]
         [AllowAnonymous]
-        [SwaggerOperation("User/Codes")]
-        public List<ErrorCodeModel> Codes()
+        [SwaggerOperation(OperationId = "UserCodes",
+            Summary = "用户 - 错误码表",
+            Description = "用户错误码对照表")]
+        public List<ApiCodeModel> Codes()
         {
             var result = _Codes<UserControllerEnums>();
 
@@ -588,15 +643,11 @@ namespace IdentityServer4.MicroService.Apis
         /// 用户 - 注册 - 提交
         /// </summary>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.register</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.register</code>
-        /// 需验证手机号；邮箱如果填写了，也需要验证
-        /// </remarks>
         [HttpPost("Register")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserRegister)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserRegister)]
-        [SwaggerOperation("User/Register")]
+        [AllowAnonymous]
+        [SwaggerOperation(OperationId = "UserRegister",
+            Summary = "用户 - 注册 - 提交",
+            Description = "需验证手机号；邮箱如果填写了，也需要验证")]
         public async Task<ApiResult<string>> Register([FromBody]UserRegisterRequest value)
         {
             if (!ModelState.IsValid)
@@ -626,7 +677,7 @@ namespace IdentityServer4.MicroService.Apis
             #endregion
 
             #region 校验手机号是否重复
-            if (await db.Users.AnyAsync(x => x.PhoneNumber.Equals(value.PhoneNumber)))
+            if (await db.Users.AnyAsync(x => x.PhoneNumber.Equals(value.PhoneNumber) && x.CountryCode == value.CountryCode))
             {
                 return new ApiResult<string>(l, UserControllerEnums.Register_PhoneNumberExists);
             }
@@ -636,7 +687,7 @@ namespace IdentityServer4.MicroService.Apis
 
             if (await redis.KeyExistsAsync(PhoneNumberVerifyCodeKey) == false)
             {
-                return new ApiResult<string>(l, UserControllerEnums.Register_PhoneNumberVerifyCodeError);
+                return new ApiResult<string>(l, UserControllerEnums.PhoneNumberVerifyCodeError);
             }
 
             await redis.RemoveAsync(PhoneNumberVerifyCodeKey);
@@ -655,11 +706,13 @@ namespace IdentityServer4.MicroService.Apis
                 PhoneNumberConfirmed = true,
                 Stature = value.Stature,
                 Weight = value.Weight,
-                Description = value.Description,
+                Description = value.Description ?? "",
                 CreateDate = DateTime.UtcNow,
                 LastUpdateTime = DateTime.UtcNow,
                 EmailConfirmed = true,
-                ParentUserID = UserId
+                ParentUserID = value.RefereeID,
+                CountryCode = value.CountryCode,
+                PasswordHash = value.Password
             };
 
             #region 确认邮箱验证通过
@@ -703,24 +756,22 @@ namespace IdentityServer4.MicroService.Apis
             }
             #endregion
 
-            var roleIds = db.Roles.Where(x => x.Name.Equals(Roles.Users) || x.Name.Equals(Roles.Developer))
+            var roleIds = db.Roles.Where(x => x.Name.Equals(DefaultRoles.User))
                     .Select(x => x.Id).ToList();
-
-            var permissions = typeof(UserPermissions).GetFields().Select(x => x.GetCustomAttribute<PolicyClaimValuesAttribute>().ClaimsValues[0]).ToList();
 
             var tenantIds = tenantDbContext.Tenants.Select(x => x.Id).ToList();
 
-            var result = await AppUserService.CreateUser(TenantId,
+            var result = await AppUserService.CreateUser(1L,
                 userManager,
                 db,
                 user,
                 roleIds,
-                string.Join(",", permissions),
+                $"{AppConstant.MicroServiceName}.all",
                 tenantIds);
 
             if (result.Succeeded)
             {
-                return new ApiResult<string>();
+                return new ApiResult<string>(user.Id.ToString());
             }
 
             else
@@ -738,15 +789,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.verifyphone</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.verifyphone</code>
-        /// </remarks>
-        [HttpPost("VerifyPhone")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserVerifyPhone)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserVerifyPhone)]
-        [SwaggerOperation("User/VerifyPhone")]
-        public async Task<ApiResult<string>> VerifyPhone([FromBody]UserVerifyPhoneRequest value)
+        [HttpPost("SmsCode")]
+        [AllowAnonymous]
+        [SwaggerOperation(OperationId = "UserSmsCode",
+            Summary = "用户 - 注册 - 发送手机验证码",
+            Description = "")]
+        public async Task<ApiResult<string>> SmsCode([FromBody]UserVerifyPhoneRequest value)
         {
             if (!ModelState.IsValid)
             {
@@ -823,15 +871,12 @@ namespace IdentityServer4.MicroService.Apis
         /// </summary>
         /// <param name="value"></param>
         /// <returns></returns>
-        /// <remarks>
-        /// <label>Client Scopes：</label><code>ids4.ms.user.verifyemail</code>
-        /// <label>User Permissions：</label><code>ids4.ms.user.verifyemail</code>
-        /// </remarks>
-        [HttpPost("VerifyEmail")]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = ClientScopes.UserVerifyEmail)]
-        [Authorize(AuthenticationSchemes = AppAuthenScheme, Policy = UserPermissions.UserVerifyEmail)]
-        [SwaggerOperation("User/VerifyEmail")]
-        public async Task<ApiResult<string>> VerifyEmail([FromBody]UserVerifyEmailRequest value)
+        [HttpPost("EmailCode")]
+        [AllowAnonymous]
+        [SwaggerOperation(OperationId = "UserEmailCode",
+            Summary = "用户 - 注册 - 发送邮件验证码",
+            Description = "")]
+        public async Task<ApiResult<string>> EmailCode([FromBody]UserVerifyEmailRequest value)
         {
             if (!ModelState.IsValid)
             {
@@ -887,8 +932,8 @@ namespace IdentityServer4.MicroService.Apis
             verifyCode = Protect(verifyCode,
                 TimeSpan.FromSeconds(UserControllerKeys.VerifyCode_Expire_Email));
 
-            await email.SendEmailAsync(
-                SendCloudMailTemplates.verify_email,
+            await email.SendEmailAsync("verify_email", "邮箱验证",
+               //SendCloudMailTemplates.verify_email,
                new string[] { value.Email },
                 new Dictionary<string, string[]>() {
                     { "%code%", new string[] { verifyCode } }
@@ -904,6 +949,51 @@ namespace IdentityServer4.MicroService.Apis
             return new ApiResult<string>();
         }
         #endregion 
+
+        #region 用户 - 忘记密码 - 手机验证码
+        /// <summary>
+        /// 用户 - 忘记密码 - 手机验证码
+        /// </summary>
+        /// <returns></returns>
+        [HttpPost("ResetPassword")]
+        [AllowAnonymous]
+        [SwaggerOperation(OperationId = "UserResetPassword",
+            Summary = "用户 - 忘记密码 - 手机验证码",
+            Description = "")]
+        public async Task<ApiResult<bool>> ResetPassword([FromBody]ResetPasswordRequest value)
+        {
+            if (!ModelState.IsValid)
+            {
+                return new ApiResult<bool>(l, BasicControllerEnums.UnprocessableEntity,
+                    ModelErrors());
+            }
+
+            #region 校验手机验证码
+            var PhoneNumberVerifyCodeKey = UserControllerKeys.VerifyCode_Phone + value.PhoneNumber + ":" + value.PhoneNumberVerifyCode;
+
+            if (await redis.KeyExistsAsync(PhoneNumberVerifyCodeKey) == false)
+            {
+                return new ApiResult<bool>(l, UserControllerEnums.PhoneNumberVerifyCodeError);
+            }
+
+            await redis.RemoveAsync(PhoneNumberVerifyCodeKey);
+            #endregion
+
+            var User = await db.Users.FirstOrDefaultAsync(x =>
+            x.PhoneNumber == value.PhoneNumber && x.CountryCode == value.CountryCode);
+
+            if (User == null)
+            {
+                return new ApiResult<bool>(l, UserControllerEnums.Register_PhoneNumberExists);
+            }
+
+            User.PasswordHash = userManager.PasswordHasher.HashPassword(User, value.Password);
+
+            db.SaveChanges();
+
+            return new ApiResult<bool>(true);
+        }
+        #endregion
         #endregion
     }
 }

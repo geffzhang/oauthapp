@@ -25,14 +25,14 @@ namespace IdentityServer4.MicroService.Models.Apis.Common
         /// <summary>
         /// 跳过的数据条数
         /// </summary>
-        [Range(0, long.MaxValue)]
+        [Range(0, int.MaxValue)]
         [DefaultValue(0)]
         public int? skip { get; set; } = 0;
 
         /// <summary>
         /// 将获取的数据条数
         /// </summary>
-        [Range(1, 2000)]
+        [Range(0, int.MaxValue)]
         [DefaultValue(10)]
         public int? take { get; set; } = 10;
 
