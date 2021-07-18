@@ -2,7 +2,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.PlatformAbstractions;
+using Microsoft.IdentityModel.Logging;
+using Microsoft.OpenApi.Any;
 
 namespace WebApplication1
 {
@@ -19,8 +23,8 @@ namespace WebApplication1
         public void ConfigureServices(IServiceCollection services)
         {
             services.AddControllersWithViews();
-
-            services.AddIdentityServer4MicroService();
+            
+            services.AddOAuthApp();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -36,12 +40,16 @@ namespace WebApplication1
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
+
             app.UseHttpsRedirection();
+
+            app.UseOAuthAppUI();
+
             app.UseStaticFiles();
 
             app.UseRouting();
 
-            app.UseIdentityServer4MicroService();
+            app.UseOAuthApp();
 
             app.UseEndpoints(endpoints =>
             {
